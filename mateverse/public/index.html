@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#080d19">
+  <title>MateVerse — Chess Without Borders</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/socket.io/socket.io.js" defer></script>
+  <script type="module" src="/app.js" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header class="topbar">
+    <a class="brand" href="https://mateverse-9jqw.onrender.com/" target="_blank" rel="noreferrer">
+      <img class="brand-logo" src="/mateverse-logo.png" alt="MateVerse logo">
+      <span>MATE<span>VERSE</span><small>CHESS WITHOUT BORDERS</small></span>
+    </a>
+    <div class="top-right"><span class="connection"><i></i><b id="connection">Connecting</b></span><button class="profile-chip" id="profile-open">♙ <span id="profile-name">Guest · Sign in</span></button></div>
+  </header>
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">THE NEXT MOVE IS YOURS</p><h1>Enter the <em>Verse.</em></h1><p>Learn the game. Outsmart the board. Challenge the world.</p></div>
+      <div class="hero-orb" aria-hidden="true"><span>♛</span></div>
+    </section>
+
+    <nav class="tabs" aria-label="Game modes">
+      <button class="tab active" data-view="play">⚔ Play</button>
+      <button class="tab" data-view="coach">✦ Coach</button>
+      <button class="tab" data-view="learn">♟ Learn</button>
+      <button class="tab" data-view="rank">🏆 Rankings</button>
+      <button class="tab" data-view="history">📜 My games</button>
+    </nav>
+
+    <section id="view-play" class="view active">
+      <div class="game-grid">
+        <section class="board-card glass">
+          <div class="player-row"><div class="avatar dark-avatar">♚</div><div><b id="black-name">Computer</b><small id="black-caption">Black · Opponent</small></div><span class="elo" id="black-elo">AI</span></div>
+          <div class="board-frame">
+            <div class="ranks" aria-hidden="true"><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
+            <div id="board" class="board" aria-label="Chess board"></div>
+          </div>
+          <div class="board-tools"><button class="action ghost" id="flip-board">⇅ Flip board</button><button class="action ghost" id="export-pgn">↓ Export PGN</button><button class="action ghost" id="copy-fen">Copy FEN</button><label class="sound-toggle"><input type="checkbox" id="sound-toggle" checked> Sound</label></div>
+          <div class="files" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
+          <div class="player-row bottom-player"><div class="avatar light-avatar">♔</div><div><b id="white-name">You</b><small id="white-caption">White · You</small></div><span class="elo">YOU</span></div>
+        </section>
+
+        <aside class="right-rail">
+          <section class="glass control-card">
+            <div class="card-title"><span>MATCH CONTROL</span><span class="live"><i></i> READY</span></div>
+            <div class="mode-select">
+              <button class="mode-choice selected" data-mode="computer">Computer</button>
+              <button class="mode-choice" data-mode="online">Online</button>
+              <button class="mode-choice" data-mode="friend">Friend</button>
+            </div>
+            <div id="computer-options" class="option-area">
+              <label for="difficulty">Computer strength</label>
+              <select id="difficulty"><option value="1">Beginner</option><option value="2" selected>Intermediate</option><option value="3">Advanced</option></select>
+            </div>
+            <div id="online-options" class="option-area" hidden>
+              <button class="action primary full" id="find-match">🌐 Find global match</button>
+              <div class="split"><input id="room-code" placeholder="ROOM CODE" maxlength="8"><button class="action secondary" id="join-room">Join</button></div>
+              <button class="action ghost full" id="create-room">＋ Create private room</button>
+              <p id="online-message" class="micro">Matchmaking pairs you with another connected player.</p>
+            </div>
+            <div id="friend-options" class="option-area" hidden>
+              <button class="action primary full" id="create-friend-room">Create invite room</button>
+              <p class="micro">Share the room code with a friend. Both players need to open this website.</p>
+            </div>
+            <div class="clock-row"><div class="clock" id="white-clock">10:00</div><label>Time<select id="time-control"><option value="0">No clock</option><option value="180">3 + 0</option><option value="300" selected>5 + 0</option><option value="600">10 + 0</option><option value="900">15 + 0</option></select></label><div class="clock" id="black-clock">10:00</div></div>
+            <div class="status-box"><small>GAME STATUS</small><b id="status">White to move</b><p id="status-detail">Select a piece to see legal moves.</p></div>
+            <div class="button-row"><button class="action secondary" id="new-game">New game</button><button class="action ghost" id="undo">Undo</button></div>
+            <div class="button-row"><button class="action ghost" id="offer-draw">Offer draw</button><button class="action ghost" id="resign">Resign</button></div>
+          </section>
+
+          <section class="glass coach-card">
+            <div class="card-title"><span>✦ MATE COACH</span><span class="tag">LIVE ANALYSIS</span></div>
+            <p id="coach-message">Get a move suggestion with a quick explanation.</p>
+            <button class="action gold full" id="hint-button">✦ Find a strong move</button>
+          </section>
+
+          <section class="glass chat-card" id="chat-card" hidden><div class="card-title"><span>LIVE MATCH CHAT</span><span class="tag">ROOM ONLY</span></div><div id="chat-messages" class="chat-messages" aria-live="polite"></div><form id="chat-form" class="chat-form"><input id="chat-input" maxlength="240" placeholder="Say something…"><button class="action secondary">Send</button></form></section>
+          <section class="glass history-card">
+            <div class="card-title"><span>MOVE HISTORY</span><span id="move-total">0 plies</span></div>
+            <ol id="move-list"><li class="empty">Your game moves appear here.</li></ol>
+          </section>
+        </aside>
+      </div>
+    </section>
+
+    <section id="view-coach" class="view">
+      <div class="content-panel glass">
+        <p class="eyebrow">THINK ONE MOVE AHEAD</p><h2>Your personal <em>Mate Coach.</em></h2>
+        <p class="muted">The coach checks legal moves and looks for tactics such as captures, checks, material gains and king safety. It is a training assistant, not a guaranteed winning oracle.</p>
+        <button class="action gold" id="coach-go">Analyse my current position</button>
+        <div id="coach-result" class="coach-result">Start a game, then ask Mate Coach to analyse your position.</div>
+      </div>
+    </section>
+
+    <section id="view-learn" class="view">
+      <div class="content-panel glass">
+        <p class="eyebrow">CHESS FOUNDATIONS</p><h2>Know your <em>pieces.</em></h2>
+        <div class="piece-grid">
+          <article><b>♙ Pawn</b><p>Moves forward one square. From its starting rank it may move two. Captures one square diagonally.</p></article>
+          <article><b>♖ Rook</b><p>Moves any number of empty squares horizontally or vertically.</p></article>
+          <article><b>♘ Knight</b><p>Moves in an L-shape: two squares in one direction and one sideways. It can jump over pieces.</p></article>
+          <article><b>♗ Bishop</b><p>Moves any number of empty squares diagonally.</p></article>
+          <article><b>♕ Queen</b><p>Combines rook and bishop movement: straight or diagonal.</p></article>
+          <article><b>♔ King</b><p>Moves one square in any direction. Castling is a special king-and-rook move.</p></article>
+        </div>
+        <h3>Quick chess principles</h3><ul class="principles"><li>Fight for the centre with pawns and pieces.</li><li>Develop knights and bishops before moving the same piece repeatedly.</li><li>Keep your king safe; castling often helps.</li><li>Before moving, ask: “What is my opponent threatening?”</li></ul>
+      </div>
+    </section>
+
+    <section id="view-rank" class="view">
+      <div class="content-panel glass">
+        <p class="eyebrow">THE GLOBAL ARENA</p><h2>Player <em>rankings.</em></h2>
+        <p class="muted">Create an account to appear on the global leaderboard. Rated results are recorded when both players are signed in.</p>
+        <div class="stat-grid"><div><small>LOCAL WINS</small><b id="stat-wins">0</b></div><div><small>LOCAL GAMES</small><b id="stat-games">0</b></div><div><small>WIN RATE</small><b id="stat-rate">—</b></div></div>
+        <div class="rank-table" id="leaderboard"><p class="muted">Loading global rankings…</p></div>
+      </div>
+    </section>
+
+    <section id="view-history" class="view"><div class="content-panel glass"><p class="eyebrow">YOUR CHESS JOURNEY</p><h2>Recent <em>matches.</em></h2><p class="muted">Sign in to see saved online game records.</p><div id="game-history" class="history-table"><p class="muted">Sign in to load your matches.</p></div></div></section>
+
+    <section class="bottom-features">
+      <article class="glass"><span>🧠</span><b>Learn smarter</b><p>Piece guides, move hints and tactical ideas.</p></article>
+      <article class="glass"><span>⚡</span><b>Play the computer</b><p>Three starter difficulty settings.</p></article>
+      <article class="glass"><span>🌐</span><b>Play worldwide</b><p>Private rooms and live matchmaking.</p></article>
+    </section>
+  </main>
+  <footer><span>MATEVERSE</span> · CHESS WITHOUT BORDERS · <span id="footer-year"></span></footer>
+</div>
+
+<div id="profile-modal" class="modal" hidden><div class="modal-card glass"><button class="modal-close" id="profile-close">×</button><p class="eyebrow">PLAYER ACCOUNT</p><h2 id="account-title">Enter the <em>Verse.</em></h2><div id="account-form"><label for="account-name">Username</label><input id="account-name" maxlength="18" placeholder="chess_player"><label for="account-display">Display name</label><input id="account-display" maxlength="18" placeholder="Your chess name"><label for="account-password">Password (8+ characters)</label><input id="account-password" type="password" minlength="8" placeholder="Password"><button class="action gold full" id="account-submit">Create account</button><button class="action ghost full" id="account-switch">Already have an account? Sign in</button><p id="account-error" class="micro"></p></div><div id="account-signed-in" hidden><p id="account-summary" class="muted"></p><button class="action ghost full" id="account-logout">Sign out</button></div><p class="micro">Accounts are stored by this server. Use a unique password; this is an early-stage project, not a bank-grade identity service.</p></div></div>
+<div id="toast" class="toast"></div>
+</body></html>

@@ -1,0 +1,7 @@
+node_modules/
+mateverse/node_modules/
+mateverse/data/
+*.log
+.env
+.env.*
+!.env.example

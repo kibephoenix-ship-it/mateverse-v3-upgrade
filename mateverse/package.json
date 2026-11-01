@@ -1,0 +1,12 @@
+{
+  "name": "mateverse-chess",
+  "version": "2.0.0",
+  "private": true,
+  "description": "MateVerse futuristic chess platform MVP",
+  "scripts": { "start": "node server.js", "dev": "node server.js" },
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
