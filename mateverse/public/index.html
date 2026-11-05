@@ -30,6 +30,7 @@
       <button class="tab" data-view="learn" data-i18n="navLearn">♟ Learn</button>
       <button class="tab" data-view="rank" data-i18n="navRank">🏆 Rankings</button>
       <button class="tab" data-view="history" data-i18n="navHistory">📜 My games</button>
+      <button class="tab" data-view="community">♙ Friends & reviews</button>
       <button class="tab" data-view="settings" data-i18n="navSettings">⚙ Settings</button>
     </nav>
 
@@ -121,11 +122,38 @@
         <p class="eyebrow">THE GLOBAL ARENA</p><h2>Player <em>rankings.</em></h2>
         <p class="muted">Create an account to appear on the global leaderboard. Rated results are recorded when both players are signed in.</p>
         <div class="stat-grid"><div><small>LOCAL WINS</small><b id="stat-wins">0</b></div><div><small>LOCAL GAMES</small><b id="stat-games">0</b></div><div><small>WIN RATE</small><b id="stat-rate">—</b></div></div>
+        <button class="action secondary" id="share-ranking">Share my ranking</button>
         <div class="rank-table" id="leaderboard"><p class="muted">Loading global rankings…</p></div>
       </div>
     </section>
 
     <section id="view-history" class="view"><div class="content-panel glass"><p class="eyebrow">YOUR CHESS JOURNEY</p><h2>Recent <em>matches.</em></h2><p class="muted">Sign in to see saved online and computer game records.</p><div id="game-history" class="history-table"><p class="muted">Sign in to load your matches.</p></div></div></section>
+
+    <section id="view-community" class="view">
+      <div class="content-panel glass">
+        <p class="eyebrow">PLAY TOGETHER</p><h2>Friends & <em>community.</em></h2>
+        <p class="muted">Find players by username or display name. Send a friend request, then challenge an online friend to a private match.</p>
+        <div class="community-search"><input id="player-search" placeholder="Search players"><button class="action secondary" id="search-players">Search</button></div>
+        <div id="player-results" class="community-list"></div>
+        <div id="player-profile" class="player-profile glass" hidden></div>
+        <div class="community-columns">
+          <section><h3>Incoming friend requests</h3><div id="friend-requests" class="community-list">Sign in to see requests.</div></section>
+          <section><h3>Match requests</h3><div id="friend-challenges" class="community-list">Sign in to see match requests.</div></section>
+          <section><h3>Your friends</h3><div id="friends-list" class="community-list">Sign in to see friends.</div></section>
+        </div>
+      </div>
+      <div class="content-panel glass review-panel">
+        <p class="eyebrow">YOUR FEEDBACK</p><h2>Rate <em>MateVerse.</em></h2>
+        <p id="review-summary" class="muted">Loading reviews…</p>
+        <form id="review-form">
+          <label for="review-name">Name (optional for guests)</label><input id="review-name" maxlength="32" placeholder="Your name">
+          <label for="review-rating">Your rating</label><select id="review-rating"><option value="5">★★★★★ — Loved it</option><option value="4">★★★★ — Great</option><option value="3">★★★ — Good</option><option value="2">★★ — Needs work</option><option value="1">★ — Poor</option></select>
+          <label for="review-comment">Review</label><textarea id="review-comment" maxlength="600" minlength="8" required placeholder="What should we keep or improve?"></textarea>
+          <button class="action gold" type="submit">Post review</button><span id="review-message" class="micro" aria-live="polite"></span>
+        </form>
+        <div id="reviews-list" class="reviews-list"></div>
+      </div>
+    </section>
 
     <section id="view-settings" class="view">
       <div class="content-panel glass settings-panel">
@@ -142,15 +170,17 @@
       </div>
     </section>
 
-    <section class="bottom-features">
-      <article class="glass"><span>🧠</span><b>Learn smarter</b><p>Piece guides, move hints and tactical ideas.</p></article>
-      <article class="glass"><span>⚡</span><b>Play the computer</b><p>Three starter difficulty settings.</p></article>
-      <article class="glass"><span>🌐</span><b>Play worldwide</b><p>Private rooms and live matchmaking.</p></article>
+    <section class="bottom-features" aria-label="Explore MateVerse">
+      <article class="glass feature-card"><span aria-hidden="true">🧠</span><b>Learn smarter</b><p>Piece guides, move hints and tactical ideas.</p><button class="action ghost feature-link" data-feature-view="learn">Explore learning</button></article>
+      <article class="glass feature-card"><span aria-hidden="true">⚡</span><b>Play the computer</b><p>Three starter difficulty settings.</p><button class="action ghost feature-link" data-feature-view="play" data-feature-mode="computer">Choose computer</button></article>
+      <article class="glass feature-card"><span aria-hidden="true">🌐</span><b>Play worldwide</b><p>Private rooms and live matchmaking.</p><button class="action ghost feature-link" data-feature-view="play" data-feature-mode="online">Explore online play</button></article>
     </section>
   </main>
-  <footer><span>MATEVERSE</span> · CHESS WITHOUT BORDERS · <span id="footer-year"></span></footer>
+  <footer class="site-footer"><span>MATEVERSE</span> · CHESS WITHOUT BORDERS · <span id="footer-year"></span>
+    <div class="contact-links"><a href="mailto:MateVersechess2026@mateverse-9jqw.onrender.com">Help: MateVersechess2026@mateverse-9jqw.onrender.com</a><a href="tel:+254103705543">+254 103 705 543</a></div>
+  </footer>
 </div>
 
-<div id="profile-modal" class="modal" hidden><div class="modal-card glass"><button class="modal-close" id="profile-close">×</button><p class="eyebrow">PLAYER ACCOUNT</p><h2 id="account-title">Enter the <em>Verse.</em></h2><div id="account-form"><label for="account-name">Username</label><input id="account-name" maxlength="18" placeholder="chess_player"><label for="account-display">Display name</label><input id="account-display" maxlength="18" placeholder="Your chess name"><label for="account-password">Password (8+ characters)</label><input id="account-password" type="password" minlength="8" placeholder="Password"><button class="action gold full" id="account-submit">Create account</button><button class="action ghost full" id="account-switch">Already have an account? Sign in</button><p id="account-error" class="micro"></p></div><div id="account-signed-in" hidden><p id="account-summary" class="muted"></p><div class="account-record"><span><b id="account-wins">0</b><small data-i18n="wins">Wins</small></span><span><b id="account-losses">0</b><small data-i18n="losses">Losses</small></span><span><b id="account-draws">0</b><small data-i18n="draws">Draws</small></span></div><button class="action ghost full" id="account-logout">Sign out</button></div><p class="micro">Accounts are stored by this server. Use a unique password; this is an early-stage project, not a bank-grade identity service.</p></div></div>
+<div id="profile-modal" class="modal" hidden><div class="modal-card glass"><button class="modal-close" id="profile-close">×</button><p class="eyebrow">PLAYER ACCOUNT</p><h2 id="account-title">Enter the <em>Verse.</em></h2><div id="account-form"><label for="account-name">Username or email</label><input id="account-name" maxlength="254" autocomplete="username" placeholder="chess_player or email"><label id="email-label" for="account-email">Email</label><input id="account-email" type="email" maxlength="254" autocomplete="email" placeholder="you@example.com"><label id="display-label" for="account-display">Display name</label><input id="account-display" maxlength="18" autocomplete="nickname" placeholder="Your chess name"><label for="account-password">Password (8+ characters)</label><input id="account-password" type="password" minlength="8" autocomplete="new-password" placeholder="Password"><button class="action gold full" id="account-submit">Create account</button><button class="action ghost full" id="account-switch">Already have an account? Sign in</button><div id="google-signin" class="google-signin"></div><p id="verification-message" class="micro" aria-live="polite"></p><button class="action ghost full" id="resend-verification" hidden>Resend verification email</button><p id="account-error" class="micro"></p></div><div id="account-signed-in" hidden><p id="account-summary" class="muted"></p><div class="account-record"><span><b id="account-wins">0</b><small data-i18n="wins">Wins</small></span><span><b id="account-losses">0</b><small data-i18n="losses">Losses</small></span><span><b id="account-draws">0</b><small data-i18n="draws">Draws</small></span></div><div class="profile-editor"><img id="avatar-preview" class="profile-avatar" alt="Profile avatar" hidden><label for="avatar-file">Profile picture (PNG, JPEG or WebP, max 1 MB)</label><input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp"><label for="profile-display-name">Display name</label><input id="profile-display-name" maxlength="18"><label for="profile-visibility">Profile visibility</label><select id="profile-visibility"><option value="public">Public profile</option><option value="friends">Friends only</option></select><label for="instagram-link">Instagram profile URL</label><input id="instagram-link" type="url" placeholder="https://instagram.com/yourname"><label for="facebook-link">Facebook profile URL</label><input id="facebook-link" type="url" placeholder="https://facebook.com/yourname"><button class="action secondary full" id="save-profile">Save profile</button><button class="action ghost full" id="share-profile">Share my profile</button><p id="profile-message" class="micro" aria-live="polite"></p></div><button class="action ghost full" id="account-logout">Sign out</button></div><p class="micro">Email and Google sign-in require email delivery and Google OAuth configuration by the site owner.</p></div></div>
 <div id="toast" class="toast"></div>
 </body></html>

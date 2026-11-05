@@ -3,10 +3,15 @@
   "version": "2.0.0",
   "private": true,
   "description": "MateVerse futuristic chess platform MVP",
-  "scripts": { "start": "node server.js", "dev": "node server.js" },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
   "dependencies": {
     "chess.js": "^1.4.0",
     "express": "^4.21.2",
+    "google-auth-library": "^11.3.3",
+    "nodemailer": "^10.3.1",
     "socket.io": "^4.8.1"
   }
 }

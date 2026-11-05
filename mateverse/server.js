@@ -5,8 +5,11 @@ const crypto = require("crypto");
 const http = require("http");
 const { Server } = require("socket.io");
 const { Chess } = require("chess.js");
+const { OAuth2Client } = require("google-auth-library");
+const nodemailer = require("nodemailer");
 
 const app = express();
+app.set("trust proxy", 1);
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: process.env.ALLOWED_ORIGIN || true } });
 const PORT = process.env.PORT || 3000;
@@ -16,23 +19,205 @@ const waiting = [];
 const profiles = new Map();
 const dataDir = process.env.DATA_DIR || path.join(__dirname, "data");
 const dataFile = path.join(dataDir, "mateverse.json");
+const avatarDir = path.join(dataDir, "avatars");
 fs.mkdirSync(dataDir, { recursive: true });
-let database = { users: {}, games: [] };
+fs.mkdirSync(avatarDir, { recursive: true });
+let database = { users: {}, games: [], friendRequests: [], friendChallenges: [], reviews: [] };
 try { if (fs.existsSync(dataFile)) database = { ...database, ...JSON.parse(fs.readFileSync(dataFile, "utf8")) }; } catch (e) { console.error("Database load failed:", e.message); }
+database.friendRequests ||= [];
+database.friendChallenges ||= [];
+database.reviews ||= [];
 const sessions = new Map();
+const requestLimits = new Map();
+const googleClient = new OAuth2Client();
 function persist() { const tmp = dataFile + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(database, null, 2)); fs.renameSync(tmp, dataFile); }
-app.use(express.json({ limit: "20kb" }));
+app.use(express.json({ limit: "30kb" }));
 app.use("/vendor", express.static(path.join(__dirname, "node_modules", "chess.js", "dist", "esm")));
+app.use("/uploads", express.static(avatarDir, { index: false, dotfiles: "deny" }));
 function readCookie(req, key) { const m = (req.headers.cookie || "").match(new RegExp("(?:^|; )" + key + "=([^;]*)")); return m ? decodeURIComponent(m[1]) : ""; }
 function getUser(req) { const s = sessions.get(readCookie(req, "mv_session")); return s && s.expires > Date.now() ? database.users[s.username] || null : null; }
-function safeUser(u) { return { username:u.username, displayName:u.displayName, rating:u.rating, games:u.games, wins:u.wins, draws:u.draws, losses:u.losses, computerGames:u.computerGames||0, computerWins:u.computerWins||0, computerDraws:u.computerDraws||0, computerLosses:u.computerLosses||0 }; }
+function safeUser(u) { return { username:u.username, displayName:u.displayName, rating:u.rating, games:u.games, wins:u.wins, draws:u.draws, losses:u.losses, computerGames:u.computerGames||0, computerWins:u.computerWins||0, computerDraws:u.computerDraws||0, computerLosses:u.computerLosses||0, avatarUrl:u.avatarUrl||"", profileVisibility:u.profileVisibility||"public" }; }
 function makeSession(res, username) { const token=crypto.randomBytes(32).toString("hex"); sessions.set(token,{username,expires:Date.now()+30*86400000}); res.setHeader("Set-Cookie",`mv_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${process.env.NODE_ENV === "production" ? "; Secure" : ""}`); }
 function passwordHash(password, salt=crypto.randomBytes(16).toString("hex")) { return {salt,hash:crypto.scryptSync(password,salt,64).toString("hex")}; }
 function authRequired(req,res,next) { req.user=getUser(req); if(!req.user)return res.status(401).json({error:"Sign in to view your game history."}); next(); }
-app.post("/api/register",(req,res)=>{ const username=String(req.body.username||"").trim().toLowerCase(), password=String(req.body.password||""), displayName=String(req.body.displayName||username).replace(/[^a-zA-Z0-9_ -]/g,"").trim().slice(0,18); if(!/^[a-z0-9_]{3,18}$/.test(username))return res.status(400).json({error:"Username must be 3?18 letters, numbers or underscores."}); if(password.length<8||password.length>100)return res.status(400).json({error:"Password must be at least 8 characters."}); if(database.users[username])return res.status(409).json({error:"That username is already taken."}); const pass=passwordHash(password); database.users[username]={username,displayName:displayName||username,...pass,rating:1200,games:0,wins:0,draws:0,losses:0};persist();makeSession(res,username);res.json({user:safeUser(database.users[username])}); });
-app.post("/api/login",(req,res)=>{const username=String(req.body.username||"").trim().toLowerCase(), password=String(req.body.password||""), u=database.users[username]; if(!u)return res.status(401).json({error:"Incorrect username or password."});const hash=crypto.scryptSync(password,u.salt,64),expected=Buffer.from(u.hash,"hex");if(hash.length!==expected.length||!crypto.timingSafeEqual(hash,expected))return res.status(401).json({error:"Incorrect username or password."});makeSession(res,username);res.json({user:safeUser(u)});});
 app.post("/api/logout",(req,res)=>{sessions.delete(readCookie(req,"mv_session"));res.setHeader("Set-Cookie","mv_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0");res.json({ok:true});});
 app.get("/api/me",(req,res)=>{const u=getUser(req);res.json({user:u?safeUser(u):null});});
+function rateLimit(req,key,limit,windowMs) {
+  const now=Date.now(),id=`${key}:${req.ip}`,recent=(requestLimits.get(id)||[]).filter(at=>now-at<windowMs);
+  if(recent.length>=limit)return false;
+  recent.push(now);requestLimits.set(id,recent);return true;
+}
+function emailTransport() {
+  if(!process.env.SMTP_HOST||!process.env.SMTP_USER||!process.env.SMTP_PASS||!process.env.SMTP_FROM)return null;
+  return nodemailer.createTransport({host:process.env.SMTP_HOST,port:Number(process.env.SMTP_PORT||587),secure:process.env.SMTP_SECURE==="true",auth:{user:process.env.SMTP_USER,pass:process.env.SMTP_PASS}});
+}
+async function sendVerification(email,token,origin) {
+  const transport=emailTransport();
+  if(!transport)throw new Error("SMTP delivery is not configured.");
+  const base=(process.env.PUBLIC_URL||origin).replace(/\/$/,"");
+  await transport.sendMail({from:process.env.SMTP_FROM,to:email,subject:"Verify your MateVerse email",text:`Verify your email address to activate MateVerse: ${base}/?verify=${encodeURIComponent(token)}\nThis link expires in one hour.`});
+}
+function issueVerification(user) {
+  const token=crypto.randomBytes(32).toString("hex");
+  user.emailVerification={hash:crypto.createHash("sha256").update(token).digest("hex"),expires:Date.now()+3600000};
+  return token;
+}
+function emailValid(email){return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)&&email.length<=254;}
+function sameFriend(a,b){return database.friendRequests.some(r=>r.status==="accepted"&&((r.from===a&&r.to===b)||(r.from===b&&r.to===a)));}
+function publicProfile(user,viewer) {
+  const isOwner=viewer?.username===user.username,isFriend=viewer&&sameFriend(viewer.username,user.username),visible=user.profileVisibility!=="friends"||isOwner||isFriend;
+  if(!visible)return {username:user.username,displayName:user.displayName,profileVisibility:"friends",isFriend:false,private:true};
+  return {username:user.username,displayName:user.displayName,rating:user.rating,games:user.games,wins:user.wins,losses:user.losses,draws:user.draws,computerGames:user.computerGames||0,computerWins:user.computerWins||0,computerLosses:user.computerLosses||0,computerDraws:user.computerDraws||0,avatarUrl:user.avatarUrl||"",profileVisibility:user.profileVisibility||"public",socialLinks:user.socialLinks||{instagram:"",facebook:""},isFriend:!!isFriend};
+}
+function connectedSocket(username){return[...io.sockets.sockets.values()].find(s=>s.data.username===username&&!s.data.room);}
+function uniqueUsername(seed) {
+  const base=String(seed||"player").toLowerCase().replace(/[^a-z0-9_]/g,"_").replace(/^_+|_+$/g,"").slice(0,14)||"player";
+  let value=base,index=1;while(database.users[value])value=`${base.slice(0,14)}_${index++}`;return value;
+}
+app.get("/api/config",(_req,res)=>res.json({googleClientId:process.env.GOOGLE_CLIENT_ID||""}));
+app.post("/api/register",async(req,res)=>{
+  if(!rateLimit(req,"register",5,3600000))return res.status(429).json({error:"Too many registration attempts. Try again later."});
+  const username=String(req.body.username||"").trim().toLowerCase(),email=String(req.body.email||"").trim().toLowerCase(),password=String(req.body.password||""),displayName=String(req.body.displayName||username).replace(/[^a-zA-Z0-9_ -]/g,"").trim().slice(0,18);
+  if(!/^[a-z0-9_]{3,18}$/.test(username))return res.status(400).json({error:"Username must be 3–18 letters, numbers or underscores."});
+  if(!emailValid(email))return res.status(400).json({error:"Enter a valid email address."});
+  if(password.length<8||password.length>100)return res.status(400).json({error:"Password must be 8–100 characters."});
+  if(!emailTransport())return res.status(503).json({error:"Email verification is not configured yet. Please try again later."});
+  if(database.users[username])return res.status(409).json({error:"That username is already taken."});
+  if(Object.values(database.users).some(user=>user.email===email))return res.status(409).json({error:"That email is already registered."});
+  const user={username,email,emailVerified:false,displayName:displayName||username,...passwordHash(password),rating:1200,games:0,wins:0,draws:0,losses:0,avatarUrl:"",socialLinks:{instagram:"",facebook:""},profileVisibility:"public"};
+  const token=issueVerification(user);database.users[username]=user;persist();
+  try{await sendVerification(email,token,`${req.protocol}://${req.get("host")}`);}
+  catch(error){console.error("Verification email delivery failed:",error.message);return res.status(503).json({error:"Your account is pending verification, but the email could not be sent. Resend the verification link after the email service is available."});}
+  res.json({verificationRequired:true,message:"Check your email for a verification link."});
+});
+app.post("/api/verify-email",(req,res)=>{
+  const token=String(req.body.token||"");
+  if(!/^[a-f0-9]{64}$/.test(token))return res.status(400).json({error:"This verification link is invalid or expired."});
+  const hash=crypto.createHash("sha256").update(token).digest("hex");
+  const user=Object.values(database.users).find(item=>item.emailVerification?.hash===hash&&item.emailVerification.expires>Date.now());
+  if(!user)return res.status(400).json({error:"This verification link is invalid or expired."});
+  user.emailVerified=true;delete user.emailVerification;persist();res.json({ok:true,message:"Email verified. You can now sign in."});
+});
+app.post("/api/resend-verification",async(req,res)=>{
+  if(!rateLimit(req,"resend-verification",5,3600000))return res.status(429).json({error:"Too many requests. Try again later."});
+  const email=String(req.body.email||"").trim().toLowerCase(),user=Object.values(database.users).find(item=>item.email===email&&!item.emailVerified);
+  if(!user)return res.json({ok:true,message:"If that account needs verification, a link will be sent."});
+  const token=issueVerification(user);persist();
+  try{await sendVerification(email,token,`${req.protocol}://${req.get("host")}`);res.json({ok:true,message:"If that account needs verification, a link will be sent."});}
+  catch(error){console.error("Verification email delivery failed:",error.message);res.status(503).json({error:"The verification email could not be sent. Please try again later."});}
+});
+app.post("/api/login",(req,res)=>{
+  const identifier=String(req.body.identifier||req.body.username||"").trim().toLowerCase(),password=String(req.body.password||""),u=database.users[identifier]||Object.values(database.users).find(user=>user.email===identifier);
+  if(!u||!u.hash||!u.salt)return res.status(401).json({error:"Incorrect email/username or password."});
+  const hash=crypto.scryptSync(password,u.salt,64),expected=Buffer.from(u.hash,"hex");
+  if(hash.length!==expected.length||!crypto.timingSafeEqual(hash,expected))return res.status(401).json({error:"Incorrect email/username or password."});
+  if(u.email&&!u.emailVerified)return res.status(403).json({error:"Verify your email before signing in.",verificationRequired:true});
+  makeSession(res,u.username);res.json({user:safeUser(u)});
+});
+app.post("/api/auth/google",async(req,res)=>{
+  const clientId=process.env.GOOGLE_CLIENT_ID,credential=String(req.body.credential||"");
+  if(!clientId)return res.status(503).json({error:"Google sign-in is not configured yet."});
+  if(!credential)return res.status(400).json({error:"Google credential is required."});
+  try{
+    const ticket=await googleClient.verifyIdToken({idToken:credential,audience:clientId}),payload=ticket.getPayload();
+    if(!payload?.email||payload.email_verified!==true)return res.status(401).json({error:"Google must provide a verified email address."});
+    const email=payload.email.toLowerCase();
+    let user=Object.values(database.users).find(item=>item.googleId===payload.sub||item.email===email);
+    if(!user){const username=uniqueUsername(payload.name||email.split("@")[0]);user=database.users[username]={username,email,emailVerified:true,googleId:payload.sub,displayName:String(payload.name||username).replace(/[^a-zA-Z0-9_ -]/g,"").trim().slice(0,18)||username,rating:1200,games:0,wins:0,draws:0,losses:0,avatarUrl:"",socialLinks:{instagram:"",facebook:""},profileVisibility:"public"};}
+    else{user.googleId=payload.sub;user.email=email;user.emailVerified=true;if(!user.displayName&&payload.name)user.displayName=String(payload.name).slice(0,18);}
+    delete user.emailVerification;persist();makeSession(res,user.username);res.json({user:safeUser(user)});
+  }catch(error){console.error("Google sign-in verification failed:",error.message);res.status(401).json({error:"Google sign-in could not be verified. Please try again."});}
+});
+app.get("/api/profile",authRequired,(req,res)=>res.json({user:{...safeUser(req.user),email:req.user.email||"",socialLinks:req.user.socialLinks||{instagram:"",facebook:""}}}));
+app.put("/api/profile",authRequired,(req,res)=>{
+  const name=String(req.body.displayName||req.user.displayName).replace(/[^a-zA-Z0-9_ -]/g,"").trim().slice(0,18),visibility=req.body.profileVisibility,socials=req.body.socialLinks||{},checked={};
+  for(const network of ["instagram","facebook"]){
+    const value=String(socials[network]||"").trim();
+    if(value){try{const url=new URL(value);const host=url.hostname.toLowerCase(),allowed=network==="instagram"?(host==="instagram.com"||host.endsWith(".instagram.com")):(host==="facebook.com"||host.endsWith(".facebook.com"));if(url.protocol!=="https:"||!allowed)throw new Error();checked[network]=url.toString();}catch{return res.status(400).json({error:`Enter a valid HTTPS ${network} profile URL.`});}}
+    else checked[network]="";
+  }
+  if(!name)return res.status(400).json({error:"Display name cannot be empty."});
+  if(!["public","friends"].includes(visibility))return res.status(400).json({error:"Choose a valid profile visibility."});
+  req.user.displayName=name;req.user.profileVisibility=visibility;req.user.socialLinks=checked;persist();res.json({user:{...safeUser(req.user),socialLinks:checked}});
+});
+app.post("/api/profile/avatar",authRequired,express.raw({type:["image/png","image/jpeg","image/webp"],limit:"1mb"}),(req,res)=>{
+  const type=req.headers["content-type"],buffer=req.body;
+  if(!Buffer.isBuffer(buffer)||buffer.length<12)return res.status(400).json({error:"Choose a PNG, JPEG or WebP image smaller than 1 MB."});
+  const valid=type==="image/png"?buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])):type==="image/jpeg"?buffer[0]===255&&buffer[1]===216&&buffer[2]===255:type==="image/webp"?buffer.toString("ascii",0,4)==="RIFF"&&buffer.toString("ascii",8,12)==="WEBP":false;
+  if(!valid)return res.status(400).json({error:"The uploaded file does not match a supported image format."});
+  const ext=type==="image/png"?"png":type==="image/jpeg"?"jpg":"webp",filename=`${crypto.randomUUID()}.${ext}`;
+  fs.writeFileSync(path.join(avatarDir,filename),buffer,{flag:"wx"});
+  const old=req.user.avatarUrl;if(old?.startsWith("/uploads/")){const oldPath=path.join(avatarDir,path.basename(old));if(fs.existsSync(oldPath))fs.unlinkSync(oldPath);}
+  req.user.avatarUrl=`/uploads/${filename}`;persist();res.json({avatarUrl:req.user.avatarUrl});
+});
+app.get("/api/players",(req,res)=>{
+  const query=String(req.query.q||"").trim().toLowerCase();if(query.length<2)return res.json({players:[]});
+  const viewer=getUser(req),players=Object.values(database.users).filter(user=>user.username!==viewer?.username&&(user.username.includes(query)||user.displayName.toLowerCase().includes(query))).slice(0,20).map(user=>publicProfile(user,viewer));
+  res.json({players});
+});
+app.get("/api/players/:username",(req,res)=>{
+  const user=database.users[String(req.params.username||"").toLowerCase()];
+  if(!user)return res.status(404).json({error:"Player not found."});
+  res.json({player:publicProfile(user,getUser(req))});
+});
+app.get("/api/friends",authRequired,(req,res)=>{
+  const username=req.user.username;
+  const friends=database.friendRequests.filter(item=>item.status==="accepted"&&(item.from===username||item.to===username)).map(item=>database.users[item.from===username?item.to:item.from]).filter(Boolean).map(user=>publicProfile(user,req.user));
+  const requests=database.friendRequests.filter(item=>item.status==="pending"&&item.to===username).map(item=>({id:item.id,player:publicProfile(database.users[item.from],req.user)}));
+  const challenges=database.friendChallenges.filter(item=>item.status==="pending"&&item.to===username&&item.expires>Date.now()).map(item=>({id:item.id,from:item.from,displayName:database.users[item.from]?.displayName||item.from}));
+  res.json({friends,requests,challenges});
+});
+app.post("/api/friends/requests",authRequired,(req,res)=>{
+  const to=String(req.body.username||"").trim().toLowerCase(),target=database.users[to],from=req.user.username;
+  if(!target||to===from)return res.status(404).json({error:"Player not found."});
+  if(sameFriend(from,to))return res.status(409).json({error:"You are already friends."});
+  const existing=database.friendRequests.find(item=>item.status==="pending"&&((item.from===from&&item.to===to)||(item.from===to&&item.to===from)));
+  if(existing){if(existing.to===from){existing.status="accepted";persist();return res.json({ok:true,accepted:true});}return res.status(409).json({error:"Friend request already sent."});}
+  const request={id:crypto.randomUUID(),from,to,status:"pending",createdAt:Date.now()};database.friendRequests.push(request);persist();
+  for(const socket of io.sockets.sockets.values())if(socket.data.username===to)socket.emit("friendRequestReceived",{id:request.id,from});
+  res.json({ok:true});
+});
+app.post("/api/friends/requests/:id/respond",authRequired,(req,res)=>{
+  const request=database.friendRequests.find(item=>item.id===req.params.id&&item.to===req.user.username&&item.status==="pending");
+  if(!request)return res.status(404).json({error:"Friend request not found."});
+  if(req.body.accept===true)request.status="accepted";else database.friendRequests=database.friendRequests.filter(item=>item.id!==request.id);
+  persist();res.json({ok:true});
+});
+app.post("/api/friends/:username/challenges",authRequired,(req,res)=>{
+  const to=String(req.params.username||"").toLowerCase();
+  if(!sameFriend(req.user.username,to))return res.status(403).json({error:"You can challenge only a saved friend."});
+  if(!connectedSocket(req.user.username))return res.status(409).json({error:"You must be online and available to send a match request."});
+  const target=connectedSocket(to);if(!target)return res.status(409).json({error:"Your friend is offline or already in a game."});
+  const challenge={id:crypto.randomUUID(),from:req.user.username,to,status:"pending",expires:Date.now()+300000};
+  database.friendChallenges.push(challenge);database.friendChallenges=database.friendChallenges.filter(item=>item.expires>Date.now()).slice(-500);persist();
+  target.emit("friendChallengeRequest",{id:challenge.id,username:req.user.username,displayName:req.user.displayName});res.json({ok:true});
+});
+app.post("/api/friend-challenges/:id/respond",authRequired,(req,res)=>{
+  const challenge=database.friendChallenges.find(item=>item.id===req.params.id&&item.to===req.user.username&&item.status==="pending"&&item.expires>Date.now());
+  if(!challenge)return res.status(404).json({error:"This match request has expired."});
+  if(req.body.accept!==true){challenge.status="declined";persist();return res.json({ok:true,accepted:false});}
+  const from=connectedSocket(challenge.from),to=connectedSocket(challenge.to);
+  if(!from||!to)return res.status(409).json({error:"Both players must be online and available to start a match."});
+  const code=roomCode(),names={w:from.data.name||database.users[challenge.from].displayName,b:to.data.name||database.users[challenge.to].displayName};
+  makeRoom(code,from.id,to.id,names,"friend");challenge.status="accepted";challenge.roomCode=code;persist();
+  from.emit("friendChallengeAccepted",{code,color:"w",fen:new Chess().fen(),opponent:names.b,names,ready:true});
+  to.emit("friendChallengeAccepted",{code,color:"b",fen:new Chess().fen(),opponent:names.w,names,ready:true});
+  sendRoomState(code);res.json({ok:true,accepted:true,code});
+});
+app.get("/api/reviews",(_req,res)=>{
+  const reviews=database.reviews.slice(-100).reverse(),average=reviews.length?Math.round(reviews.reduce((sum,item)=>sum+item.rating,0)/reviews.length*10)/10:0;
+  res.json({reviews,average,count:reviews.length});
+});
+app.post("/api/reviews",(req,res)=>{
+  if(!rateLimit(req,"review",3,3600000))return res.status(429).json({error:"Please wait before posting another review."});
+  const rating=Number(req.body.rating),comment=String(req.body.comment||"").trim().slice(0,600),displayName=String(req.body.displayName||"Guest").replace(/[<>]/g,"").trim().slice(0,32)||"Guest";
+  if(!Number.isInteger(rating)||rating<1||rating>5)return res.status(400).json({error:"Choose a rating from 1 to 5 stars."});
+  if(comment.length<8)return res.status(400).json({error:"Please write at least 8 characters."});
+  const user=getUser(req),existing=user&&database.reviews.find(item=>item.username===user.username);
+  if(existing){existing.rating=rating;existing.comment=comment;existing.displayName=user.displayName;existing.date=new Date().toISOString();persist();return res.json({review:existing});}
+  const review={id:crypto.randomUUID(),username:user?.username||null,displayName:user?.displayName||displayName,rating,comment,date:new Date().toISOString()};
+  database.reviews.push(review);database.reviews=database.reviews.slice(-1000);persist();res.json({review});
+});
 app.get("/api/leaderboard",(_req,res)=>res.json({players:Object.values(database.users).sort((a,b)=>b.rating-a.rating||b.wins-a.wins).slice(0,50).map(safeUser)}));
 app.get("/api/games",authRequired,(req,res)=>res.json({games:database.games.filter(g=>g.players.includes(req.user.username)).slice(-30).reverse()}));
 app.post("/api/games/computer",authRequired,(req,res)=>{
@@ -124,11 +309,12 @@ function recordRoomResult(room, result, reason) {
 }
 
 io.on("connection", socket => {
-  socket.on("setProfile", ({ name, username }, reply = () => {}) => {
-    const safe = cleanName(name);
+  socket.on("setProfile", ({ name }, reply = () => {}) => {
+    const user=getUser({headers:{cookie:socket.handshake.headers.cookie||""}});
+    const safe = user?.displayName||cleanName(name);
     profiles.set(socket.id, safe);
     socket.data.name = safe;
-    socket.data.username = username && database.users[username] ? username : null;
+    socket.data.username = user?.username||null;
     reply({ ok: true, name: safe });
   });
 
