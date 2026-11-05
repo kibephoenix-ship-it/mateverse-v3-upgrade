@@ -25,16 +25,18 @@
     </section>
 
     <nav class="tabs" aria-label="Game modes">
-      <button class="tab active" data-view="play">⚔ Play</button>
-      <button class="tab" data-view="coach">✦ Coach</button>
-      <button class="tab" data-view="learn">♟ Learn</button>
-      <button class="tab" data-view="rank">🏆 Rankings</button>
-      <button class="tab" data-view="history">📜 My games</button>
+      <button class="tab active" data-view="play" data-i18n="navPlay">⚔ Play</button>
+      <button class="tab" data-view="coach" data-i18n="navCoach">✦ Coach</button>
+      <button class="tab" data-view="learn" data-i18n="navLearn">♟ Learn</button>
+      <button class="tab" data-view="rank" data-i18n="navRank">🏆 Rankings</button>
+      <button class="tab" data-view="history" data-i18n="navHistory">📜 My games</button>
+      <button class="tab" data-view="settings" data-i18n="navSettings">⚙ Settings</button>
     </nav>
 
     <section id="view-play" class="view active">
       <div class="game-grid">
         <section class="board-card glass">
+          <div id="winner-banner" class="winner-banner" role="status" aria-live="assertive" hidden><span id="winner-title"></span><small id="winner-detail"></small></div>
           <div class="player-row"><div class="avatar dark-avatar">♚</div><div><b id="black-name">Computer</b><small id="black-caption">Black · Opponent</small></div><span class="elo" id="black-elo">AI</span></div>
           <div class="board-frame">
             <div class="ranks" aria-hidden="true"><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
@@ -42,46 +44,48 @@
           </div>
           <div class="board-tools"><button class="action ghost" id="flip-board">⇅ Flip board</button><button class="action ghost" id="export-pgn">↓ Export PGN</button><button class="action ghost" id="copy-fen">Copy FEN</button><label class="sound-toggle"><input type="checkbox" id="sound-toggle" checked> Sound</label></div>
           <div class="files" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
-          <div class="player-row bottom-player"><div class="avatar light-avatar">♔</div><div><b id="white-name">You</b><small id="white-caption">White · You</small></div><span class="elo">YOU</span></div>
+          <div class="player-row bottom-player"><div class="avatar light-avatar">♔</div><div><b id="white-name">You</b><small id="white-caption">White · You</small></div><span class="elo" id="white-elo">YOU</span></div>
         </section>
 
         <aside class="right-rail">
           <section class="glass control-card">
-            <div class="card-title"><span>MATCH CONTROL</span><span class="live"><i></i> READY</span></div>
+            <div class="card-title"><span data-i18n="matchControl">MATCH CONTROL</span><span class="live"><i></i> READY</span></div>
             <div class="mode-select">
-              <button class="mode-choice selected" data-mode="computer">Computer</button>
-              <button class="mode-choice" data-mode="online">Online</button>
-              <button class="mode-choice" data-mode="friend">Friend</button>
+              <button class="mode-choice selected" data-mode="computer" data-i18n="modeComputer">Computer</button>
+              <button class="mode-choice" data-mode="online" data-i18n="modeOnline">Online</button>
+              <button class="mode-choice" data-mode="friend" data-i18n="modeFriend">Friend</button>
             </div>
             <div id="computer-options" class="option-area">
-              <label for="difficulty">Computer strength</label>
-              <select id="difficulty"><option value="1">Beginner</option><option value="2" selected>Intermediate</option><option value="3">Advanced</option></select>
+              <label for="difficulty" data-i18n="computerStrength">Computer strength</label>
+              <select id="difficulty"><option value="1" selected>Beginner</option><option value="2">Intermediate</option><option value="3">Advanced</option></select>
             </div>
             <div id="online-options" class="option-area" hidden>
-              <button class="action primary full" id="find-match">🌐 Find global match</button>
+              <button class="action primary full" id="find-match" data-i18n="findMatch">🌐 Find global match</button>
               <div class="split"><input id="room-code" placeholder="ROOM CODE" maxlength="8"><button class="action secondary" id="join-room">Join</button></div>
-              <button class="action ghost full" id="create-room">＋ Create private room</button>
-              <p id="online-message" class="micro">Matchmaking pairs you with another connected player.</p>
+              <button class="action ghost full" id="create-room" data-i18n="createPrivateRoom">＋ Create private room</button>
+              <div id="invite-tools" hidden><label for="invite-code">INVITE CODE</label><div class="split"><input id="invite-code" readonly><button class="action secondary" id="copy-invite-code" type="button">Copy code</button></div></div>
+              <p id="online-message" class="micro">Matchmaking pairs you with another connected player. To join a friend's room, enter their code above.</p>
             </div>
             <div id="friend-options" class="option-area" hidden>
               <button class="action primary full" id="create-friend-room">Create invite room</button>
-              <p class="micro">Share the room code with a friend. Both players need to open this website.</p>
+              <p class="micro">Create a room, then share its code. Your friend can choose Online and enter the code to join.</p>
             </div>
             <div class="clock-row"><div class="clock" id="white-clock">10:00</div><label>Time<select id="time-control"><option value="0">No clock</option><option value="180">3 + 0</option><option value="300" selected>5 + 0</option><option value="600">10 + 0</option><option value="900">15 + 0</option></select></label><div class="clock" id="black-clock">10:00</div></div>
-            <div class="status-box"><small>GAME STATUS</small><b id="status">White to move</b><p id="status-detail">Select a piece to see legal moves.</p></div>
-            <div class="button-row"><button class="action secondary" id="new-game">New game</button><button class="action ghost" id="undo">Undo</button></div>
-            <div class="button-row"><button class="action ghost" id="offer-draw">Offer draw</button><button class="action ghost" id="resign">Resign</button></div>
+            <div class="status-box"><small data-i18n="gameStatus">GAME STATUS</small><b id="status">Ready to play</b><p id="status-detail">Press Start game when you're ready.</p></div>
+            <button class="action gold full" id="start-game" data-i18n="startGame">Start game</button>
+            <div class="button-row"><button class="action secondary" id="new-game" data-i18n="newGame">New game</button><button class="action ghost" id="undo" data-i18n="undo">Undo</button></div>
+            <div class="button-row"><button class="action ghost" id="offer-draw" data-i18n="offerDraw">Offer draw</button><button class="action ghost" id="resign" data-i18n="resign">Resign</button></div>
           </section>
 
           <section class="glass coach-card">
-            <div class="card-title"><span>✦ MATE COACH</span><span class="tag">LIVE ANALYSIS</span></div>
+            <div class="card-title"><span data-i18n="mateCoach">✦ MATE COACH</span><span class="tag" data-i18n="liveAnalysis">LIVE ANALYSIS</span></div>
             <p id="coach-message">Get a move suggestion with a quick explanation.</p>
-            <button class="action gold full" id="hint-button">✦ Find a strong move</button>
+            <button class="action gold full" id="hint-button" data-i18n="strongMove">✦ Find a strong move</button>
           </section>
 
-          <section class="glass chat-card" id="chat-card" hidden><div class="card-title"><span>LIVE MATCH CHAT</span><span class="tag">ROOM ONLY</span></div><div id="chat-messages" class="chat-messages" aria-live="polite"></div><form id="chat-form" class="chat-form"><input id="chat-input" maxlength="240" placeholder="Say something…"><button class="action secondary">Send</button></form></section>
+          <section class="glass chat-card" id="chat-card" hidden><div class="card-title"><span data-i18n="liveChat">LIVE MATCH CHAT</span><span class="tag" data-i18n="roomOnly">ROOM ONLY</span></div><div id="chat-messages" class="chat-messages" aria-live="polite"></div><form id="chat-form" class="chat-form"><input id="chat-input" maxlength="240" placeholder="Say something…"><button class="action secondary" data-i18n="send">Send</button></form></section>
           <section class="glass history-card">
-            <div class="card-title"><span>MOVE HISTORY</span><span id="move-total">0 plies</span></div>
+            <div class="card-title"><span data-i18n="moveHistory">MOVE HISTORY</span><span id="move-total">0 plies</span></div>
             <ol id="move-list"><li class="empty">Your game moves appear here.</li></ol>
           </section>
         </aside>
@@ -121,7 +125,22 @@
       </div>
     </section>
 
-    <section id="view-history" class="view"><div class="content-panel glass"><p class="eyebrow">YOUR CHESS JOURNEY</p><h2>Recent <em>matches.</em></h2><p class="muted">Sign in to see saved online game records.</p><div id="game-history" class="history-table"><p class="muted">Sign in to load your matches.</p></div></div></section>
+    <section id="view-history" class="view"><div class="content-panel glass"><p class="eyebrow">YOUR CHESS JOURNEY</p><h2>Recent <em>matches.</em></h2><p class="muted">Sign in to see saved online and computer game records.</p><div id="game-history" class="history-table"><p class="muted">Sign in to load your matches.</p></div></div></section>
+
+    <section id="view-settings" class="view">
+      <div class="content-panel glass settings-panel">
+        <p class="eyebrow" data-i18n="personalize">MAKE IT YOURS</p><h2 data-i18n="settingsTitle">Your <em>settings.</em></h2>
+        <p class="muted" data-i18n="settingsDescription">Choose how MateVerse looks, sounds and speaks. Your preferences stay on this device.</p>
+        <div class="settings-grid">
+          <label class="setting-row"><span><b data-i18n="language">Language</b><small data-i18n="languageHelp">Choose the interface language.</small></span><select id="language-setting"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="sw">Kiswahili</option></select></label>
+          <label class="setting-row"><span><b data-i18n="appearance">Appearance</b><small data-i18n="appearanceHelp">Switch between dark and light mode.</small></span><select id="theme-setting"><option value="dark">Dark</option><option value="light">Light</option></select></label>
+          <label class="setting-row"><span><b data-i18n="boardColors">Board colors</b><small data-i18n="boardColorsHelp">Pick a board palette.</small></span><select id="board-setting"><option value="classic">Classic</option><option value="ocean">Ocean</option><option value="forest">Forest</option></select></label>
+          <label class="setting-row"><span><b data-i18n="computerStrength">Computer strength</b><small data-i18n="strengthHelp">Make the computer easier or more challenging.</small></span><select id="settings-difficulty"><option value="1">Beginner</option><option value="2">Intermediate</option><option value="3">Advanced</option></select></label>
+          <label class="setting-toggle"><span><b data-i18n="moveSounds">Move sounds</b><small data-i18n="soundHelp">Play a sound after each move.</small></span><input id="settings-sound" type="checkbox"></label>
+          <label class="setting-toggle"><span><b data-i18n="flipBoard">Flip board</b><small data-i18n="flipHelp">Show your pieces at the bottom.</small></span><input id="settings-flip" type="checkbox"></label>
+        </div>
+      </div>
+    </section>
 
     <section class="bottom-features">
       <article class="glass"><span>🧠</span><b>Learn smarter</b><p>Piece guides, move hints and tactical ideas.</p></article>
@@ -132,6 +151,6 @@
   <footer><span>MATEVERSE</span> · CHESS WITHOUT BORDERS · <span id="footer-year"></span></footer>
 </div>
 
-<div id="profile-modal" class="modal" hidden><div class="modal-card glass"><button class="modal-close" id="profile-close">×</button><p class="eyebrow">PLAYER ACCOUNT</p><h2 id="account-title">Enter the <em>Verse.</em></h2><div id="account-form"><label for="account-name">Username</label><input id="account-name" maxlength="18" placeholder="chess_player"><label for="account-display">Display name</label><input id="account-display" maxlength="18" placeholder="Your chess name"><label for="account-password">Password (8+ characters)</label><input id="account-password" type="password" minlength="8" placeholder="Password"><button class="action gold full" id="account-submit">Create account</button><button class="action ghost full" id="account-switch">Already have an account? Sign in</button><p id="account-error" class="micro"></p></div><div id="account-signed-in" hidden><p id="account-summary" class="muted"></p><button class="action ghost full" id="account-logout">Sign out</button></div><p class="micro">Accounts are stored by this server. Use a unique password; this is an early-stage project, not a bank-grade identity service.</p></div></div>
+<div id="profile-modal" class="modal" hidden><div class="modal-card glass"><button class="modal-close" id="profile-close">×</button><p class="eyebrow">PLAYER ACCOUNT</p><h2 id="account-title">Enter the <em>Verse.</em></h2><div id="account-form"><label for="account-name">Username</label><input id="account-name" maxlength="18" placeholder="chess_player"><label for="account-display">Display name</label><input id="account-display" maxlength="18" placeholder="Your chess name"><label for="account-password">Password (8+ characters)</label><input id="account-password" type="password" minlength="8" placeholder="Password"><button class="action gold full" id="account-submit">Create account</button><button class="action ghost full" id="account-switch">Already have an account? Sign in</button><p id="account-error" class="micro"></p></div><div id="account-signed-in" hidden><p id="account-summary" class="muted"></p><div class="account-record"><span><b id="account-wins">0</b><small data-i18n="wins">Wins</small></span><span><b id="account-losses">0</b><small data-i18n="losses">Losses</small></span><span><b id="account-draws">0</b><small data-i18n="draws">Draws</small></span></div><button class="action ghost full" id="account-logout">Sign out</button></div><p class="micro">Accounts are stored by this server. Use a unique password; this is an early-stage project, not a bank-grade identity service.</p></div></div>
 <div id="toast" class="toast"></div>
 </body></html>

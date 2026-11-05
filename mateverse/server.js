@@ -25,7 +25,7 @@ app.use(express.json({ limit: "20kb" }));
 app.use("/vendor", express.static(path.join(__dirname, "node_modules", "chess.js", "dist", "esm")));
 function readCookie(req, key) { const m = (req.headers.cookie || "").match(new RegExp("(?:^|; )" + key + "=([^;]*)")); return m ? decodeURIComponent(m[1]) : ""; }
 function getUser(req) { const s = sessions.get(readCookie(req, "mv_session")); return s && s.expires > Date.now() ? database.users[s.username] || null : null; }
-function safeUser(u) { return { username:u.username, displayName:u.displayName, rating:u.rating, games:u.games, wins:u.wins, draws:u.draws, losses:u.losses }; }
+function safeUser(u) { return { username:u.username, displayName:u.displayName, rating:u.rating, games:u.games, wins:u.wins, draws:u.draws, losses:u.losses, computerGames:u.computerGames||0, computerWins:u.computerWins||0, computerDraws:u.computerDraws||0, computerLosses:u.computerLosses||0 }; }
 function makeSession(res, username) { const token=crypto.randomBytes(32).toString("hex"); sessions.set(token,{username,expires:Date.now()+30*86400000}); res.setHeader("Set-Cookie",`mv_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=2592000${process.env.NODE_ENV === "production" ? "; Secure" : ""}`); }
 function passwordHash(password, salt=crypto.randomBytes(16).toString("hex")) { return {salt,hash:crypto.scryptSync(password,salt,64).toString("hex")}; }
 function authRequired(req,res,next) { req.user=getUser(req); if(!req.user)return res.status(401).json({error:"Sign in to view your game history."}); next(); }
@@ -35,6 +35,26 @@ app.post("/api/logout",(req,res)=>{sessions.delete(readCookie(req,"mv_session"))
 app.get("/api/me",(req,res)=>{const u=getUser(req);res.json({user:u?safeUser(u):null});});
 app.get("/api/leaderboard",(_req,res)=>res.json({players:Object.values(database.users).sort((a,b)=>b.rating-a.rating||b.wins-a.wins).slice(0,50).map(safeUser)}));
 app.get("/api/games",authRequired,(req,res)=>res.json({games:database.games.filter(g=>g.players.includes(req.user.username)).slice(-30).reverse()}));
+app.post("/api/games/computer",authRequired,(req,res)=>{
+  const id=String(req.body.id||"").slice(0,80), pgn=String(req.body.pgn||""), userColor=req.body.color==="b"?"b":"w";
+  if(!id||!pgn||pgn.length>10000)return res.status(400).json({error:"A completed game record is required."});
+  const existing=database.games.find(g=>g.id===id&&g.players.includes(req.user.username));
+  if(existing)return res.json({user:safeUser(req.user),game:existing});
+  const completed=new Chess();
+  try{completed.loadPgn(pgn);}catch(_e){return res.status(400).json({error:"The game record is not valid PGN."});}
+  if(!completed.isGameOver())return res.status(400).json({error:"Only completed games can be saved."});
+  const result=completed.isCheckmate()?(completed.turn()==="w"?"0-1":"1-0"):"1/2-1/2";
+  req.user.computerGames=req.user.computerGames||0;req.user.computerWins=req.user.computerWins||0;req.user.computerLosses=req.user.computerLosses||0;req.user.computerDraws=req.user.computerDraws||0;
+  req.user.computerGames++;
+  if(result==="1/2-1/2")req.user.computerDraws++;
+  else if(result===(userColor==="w"?"1-0":"0-1"))req.user.computerWins++;
+  else req.user.computerLosses++;
+  const gameRecord={id,players:[req.user.username],names:[req.user.displayName,"MateVerse AI"],result,reason:"computer",pgn,date:new Date().toISOString(),mode:"computer"};
+  database.games.push(gameRecord);
+  database.games=database.games.slice(-5000);
+  persist();
+  res.json({user:safeUser(req.user),game:gameRecord});
+});
 const MAX_CHAT_LENGTH = 240;
 
 app.use(express.static(path.join(__dirname, "public")));
@@ -50,7 +70,9 @@ function sendRoomState(code) {
     code,
     fen: room.game.fen(),
     history: room.game.history(),
+    chat: room.chat,
     players: room.players,
+    names: room.names,
     status: room.game.isGameOver()
       ? (room.game.isCheckmate() ? "Checkmate" : "Draw")
       : (room.game.turn() === "w" ? "White" : "Black") + " to move",
@@ -119,7 +141,7 @@ io.on("connection", socket => {
     if (rooms.has(code)) return reply({ ok: false, error: "That room already exists." });
     const name = socket.data.name || "Player";
     const room = makeRoom(code, socket.id, null, { w: name, b: "Waiting for player" }, "private");
-    reply({ ok: true, code, color: "w", fen: room.game.fen(), name, ready: false });
+    reply({ ok: true, code, color: "w", fen: room.game.fen(), name, names: room.names, ready: false });
     sendRoomState(code);
   });
 
@@ -138,7 +160,7 @@ io.on("connection", socket => {
     socket.join(code);
     socket.data.room = code;
     socket.data.color = "b";
-    reply({ ok: true, code, color: "b", fen: room.game.fen(), name: room.names.b, ready: true });
+    reply({ ok: true, code, color: "b", fen: room.game.fen(), name: room.names.b, opponent: room.names.w, names: room.names, ready: true });
     sendRoomState(code);
     io.to(code).emit("systemMessage", { text: `${room.names.b} joined the match.` });
   });
@@ -173,8 +195,8 @@ io.on("connection", socket => {
     const firstName = opponent.data.name || "Player";
     const secondName = socket.data.name || "Player";
     const room = makeRoom(code, opponentId, socket.id, { w: firstName, b: secondName }, "matchmaking");
-    reply({ ok: true, waiting: false, code, color: "b", fen: room.game.fen(), opponent: firstName, ready: true });
-    opponent.emit("matchFound", { code, color: "w", fen: room.game.fen(), opponent: secondName, ready: true });
+    reply({ ok: true, waiting: false, code, color: "b", fen: room.game.fen(), opponent: firstName, names: room.names, ready: true });
+    opponent.emit("matchFound", { code, color: "w", fen: room.game.fen(), opponent: secondName, names: room.names, ready: true });
     sendRoomState(code);
   });
 
@@ -208,15 +230,16 @@ io.on("connection", socket => {
     } catch (_e) { reply({ ok: false, error: "Illegal move." }); }
   });
 
-  socket.on("chatMessage", ({ code, message }) => {
+  socket.on("chatMessage", ({ code, message }, reply = () => {}) => {
     const room = rooms.get(String(code || "").toUpperCase());
-    if (!room || socket.data.room !== room.code) return;
+    if (!room || socket.data.room !== room.code || !Object.values(room.players).includes(socket.id)) return reply({ ok: false, error: "You are not in this room." });
     const text = String(message || "").trim().slice(0, MAX_CHAT_LENGTH);
-    if (!text) return;
+    if (!text) return reply({ ok: false, error: "Enter a message first." });
     const item = { name: socket.data.name || "Player", text, at: Date.now() };
     room.chat.push(item);
     room.chat = room.chat.slice(-50);
     io.to(room.code).emit("chatMessage", item);
+    reply({ ok: true });
   });
 
   socket.on("offerDraw", ({ code }) => { const room=rooms.get(String(code||"").toUpperCase()); if(!room||socket.data.room!==room.code||room.ended||room.game.isGameOver())return; room.drawOffer=socket.id; socket.to(room.code).emit("drawOffered",{name:socket.data.name||"Opponent"}); });
