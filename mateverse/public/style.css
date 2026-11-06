@@ -86,3 +86,30 @@ html[data-theme="light"] .community-search input,html[data-theme="light"] .profi
     display: block;
     margin: 10px auto;
 }
+.connection-banner{padding:9px 12px;margin:0 0 12px;border:1px solid #e8ad4c66;border-radius:8px;background:#e8ad4c14;color:#f5cf80;font-size:11px}
+.connection-banner[hidden]{display:none}
+.board-frame{align-items:stretch}
+.evaluation-wrap{width:26px;flex:0 0 26px;display:grid;grid-template-rows:auto 1fr;gap:5px;text-align:center}
+.evaluation-label{font:700 9px 'Space Grotesk';color:var(--text);white-space:nowrap}
+.evaluation-track{width:12px;height:100%;min-height:80px;margin:auto;background:#202632;border:1px solid #ffffff44;border-radius:8px;display:flex;align-items:flex-end;overflow:hidden}
+.evaluation-fill{width:100%;height:50%;background:#f4f0e8;transition:height .25s ease}
+.square.premove-square{box-shadow:inset 0 0 0 3px #8f6dd0}
+.move-san{white-space:nowrap}
+.move-san[data-grade]::after{content:attr(data-grade);display:inline-block;margin-left:4px;padding:1px 4px;border-radius:4px;font-size:8px;font-weight:800;line-height:1.4;text-transform:capitalize;vertical-align:1px}
+.move-san[data-grade="best"]::after{background:#5ee0a033;color:#5ee0a0}
+.move-san[data-grade="excellent"]::after{background:#55d8e833;color:#55d8e8}
+.move-san[data-grade="inaccuracy"]::after{background:#f3c35d33;color:#f3c35d}
+.move-san[data-grade="mistake"]::after{background:#f08d4d33;color:#f08d4d}
+.move-san[data-grade="blunder"]::after{background:#f0646433;color:#ff7878}
+.review-controls{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;margin:9px 0}
+.review-controls[hidden]{display:none}
+.review-controls .action{padding:7px 9px}
+.review-controls span{font-size:10px;color:var(--muted);min-width:74px;text-align:center}
+.winner-banner{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.winner-banner>span,.winner-banner>small{flex:1 1 100%}
+.winner-banner .action{margin-left:auto}
+.clock.low-time{color:#ff6969;border-color:#ff6969;box-shadow:0 0 14px #ff454540;animation:clock-alert 1s ease-in-out infinite alternate}
+@keyframes clock-alert{to{filter:brightness(1.35)}}
+html[data-theme="light"] .connection-banner{color:#76510c;background:#f1d48c55}
+html[data-theme="light"] .evaluation-track{background:#202632}
+@media(max-width:480px){.evaluation-wrap{width:21px;flex-basis:21px}.evaluation-track{width:10px}.board-tools{flex-wrap:wrap}.board-tools .action{flex:1 1 30%}}

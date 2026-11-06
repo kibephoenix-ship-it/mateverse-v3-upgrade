@@ -11,10 +11,14 @@ const nodemailer = require("nodemailer");
 const app = express();
 app.set("trust proxy", 1);
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: process.env.ALLOWED_ORIGIN || true } });
+const io = new Server(server, {
+  cors: { origin: process.env.ALLOWED_ORIGIN || true },
+  connectionStateRecovery: { maxDisconnectionDuration: 120000, skipMiddlewares: true }
+});
 const PORT = process.env.PORT || 3000;
 
 const rooms = new Map();
+const reconnectTimeouts = new Map();
 const waiting = [];
 const profiles = new Map();
 const dataDir = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -199,9 +203,9 @@ app.post("/api/friend-challenges/:id/respond",authRequired,(req,res)=>{
   const from=connectedSocket(challenge.from),to=connectedSocket(challenge.to);
   if(!from||!to)return res.status(409).json({error:"Both players must be online and available to start a match."});
   const code=roomCode(),names={w:from.data.name||database.users[challenge.from].displayName,b:to.data.name||database.users[challenge.to].displayName};
-  makeRoom(code,from.id,to.id,names,"friend");challenge.status="accepted";challenge.roomCode=code;persist();
-  from.emit("friendChallengeAccepted",{code,color:"w",fen:new Chess().fen(),opponent:names.b,names,ready:true});
-  to.emit("friendChallengeAccepted",{code,color:"b",fen:new Chess().fen(),opponent:names.w,names,ready:true});
+  const room=makeRoom(code,from.id,to.id,names,"friend");challenge.status="accepted";challenge.roomCode=code;persist();
+  from.emit("friendChallengeAccepted",{code,color:"w",fen:room.game.fen(),opponent:names.b,names,ready:true,resumeToken:room.resumeTokens.w});
+  to.emit("friendChallengeAccepted",{code,color:"b",fen:room.game.fen(),opponent:names.w,names,ready:true,resumeToken:room.resumeTokens.b});
   sendRoomState(code);res.json({ok:true,accepted:true,code});
 });
 app.get("/api/reviews",(_req,res)=>{
@@ -257,6 +261,7 @@ function sendRoomState(code) {
     history: room.game.history(),
     chat: room.chat,
     players: room.players,
+    connected: { w: !!io.sockets.sockets.get(room.players.w), b: !!io.sockets.sockets.get(room.players.b) },
     names: room.names,
     status: room.game.isGameOver()
       ? (room.game.isCheckmate() ? "Checkmate" : "Draw")
@@ -269,7 +274,9 @@ function makeRoom(code, white, black, names, type) {
     code, game: new Chess(), type,
     players: { w: white, b: black },
     names: { w: names.w, b: names.b },
-    chat: [], users: { w: io.sockets.sockets.get(white)?.data.username || null, b: io.sockets.sockets.get(black)?.data.username || null }, recorded: false, drawOffer: null, createdAt: Date.now()
+    chat: [], users: { w: io.sockets.sockets.get(white)?.data.username || null, b: io.sockets.sockets.get(black)?.data.username || null },
+    resumeTokens: { w: crypto.randomBytes(24).toString("hex"), b: crypto.randomBytes(24).toString("hex") },
+    recorded: false, drawOffer: null, rematchRequest: null, createdAt: Date.now()
   };
   rooms.set(code, room);
   if (white) io.sockets.sockets.get(white)?.join(code);
@@ -309,6 +316,13 @@ function recordRoomResult(room, result, reason) {
 }
 
 io.on("connection", socket => {
+  if (socket.recovered) {
+    const timer = reconnectTimeouts.get(socket.id);
+    if (timer) clearTimeout(timer);
+    reconnectTimeouts.delete(socket.id);
+    if (socket.data.room) sendRoomState(socket.data.room);
+  }
+
   socket.on("setProfile", ({ name }, reply = () => {}) => {
     const user=getUser({headers:{cookie:socket.handshake.headers.cookie||""}});
     const safe = user?.displayName||cleanName(name);
@@ -327,7 +341,7 @@ io.on("connection", socket => {
     if (rooms.has(code)) return reply({ ok: false, error: "That room already exists." });
     const name = socket.data.name || "Player";
     const room = makeRoom(code, socket.id, null, { w: name, b: "Waiting for player" }, "private");
-    reply({ ok: true, code, color: "w", fen: room.game.fen(), name, names: room.names, ready: false });
+    reply({ ok: true, code, color: "w", fen: room.game.fen(), name, names: room.names, ready: false, resumeToken: room.resumeTokens.w });
     sendRoomState(code);
   });
 
@@ -346,7 +360,7 @@ io.on("connection", socket => {
     socket.join(code);
     socket.data.room = code;
     socket.data.color = "b";
-    reply({ ok: true, code, color: "b", fen: room.game.fen(), name: room.names.b, opponent: room.names.w, names: room.names, ready: true });
+    reply({ ok: true, code, color: "b", fen: room.game.fen(), name: room.names.b, opponent: room.names.w, names: room.names, ready: true, resumeToken: room.resumeTokens.b });
     sendRoomState(code);
     io.to(code).emit("systemMessage", { text: `${room.names.b} joined the match.` });
   });
@@ -381,8 +395,8 @@ io.on("connection", socket => {
     const firstName = opponent.data.name || "Player";
     const secondName = socket.data.name || "Player";
     const room = makeRoom(code, opponentId, socket.id, { w: firstName, b: secondName }, "matchmaking");
-    reply({ ok: true, waiting: false, code, color: "b", fen: room.game.fen(), opponent: firstName, names: room.names, ready: true });
-    opponent.emit("matchFound", { code, color: "w", fen: room.game.fen(), opponent: secondName, names: room.names, ready: true });
+    reply({ ok: true, waiting: false, code, color: "b", fen: room.game.fen(), opponent: firstName, names: room.names, ready: true, resumeToken: room.resumeTokens.b });
+    opponent.emit("matchFound", { code, color: "w", fen: room.game.fen(), opponent: secondName, names: room.names, ready: true, resumeToken: room.resumeTokens.w });
     sendRoomState(code);
   });
 
@@ -390,9 +404,40 @@ io.on("connection", socket => {
     removeFromQueue(socket);
   });
 
-  socket.on("getRoomState", ({ code }) => {
+  socket.on("getRoomState", ({ code }, reply = () => {}) => {
     const room = rooms.get(String(code || "").toUpperCase());
-    if (room && socket.data.room === room.code && Object.values(room.players).includes(socket.id)) sendRoomState(room.code);
+    if (room && socket.data.room === room.code && Object.values(room.players).includes(socket.id)) {
+      sendRoomState(room.code);
+      reply({ ok: true });
+    } else reply({ ok: false, error: "Match not found." });
+  });
+
+  socket.on("resumeRoom", ({ code, token }, reply = () => {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    const color = room && (room.resumeTokens.w === token ? "w" : room.resumeTokens.b === token ? "b" : null);
+    if (!room || !color) return reply({ ok: false, error: "This match can no longer be resumed." });
+    const previousId = room.players[color];
+    if (previousId && previousId !== socket.id) {
+      const oldSocket = io.sockets.sockets.get(previousId);
+      if (oldSocket) oldSocket.disconnect(true);
+      const timer = reconnectTimeouts.get(previousId);
+      if (timer) clearTimeout(timer);
+      reconnectTimeouts.delete(previousId);
+      oldSocket?.leave(room.code);
+    }
+    room.players[color] = socket.id;
+    socket.join(room.code);
+    socket.data.room = room.code;
+    socket.data.color = color;
+    socket.data.name = room.names[color];
+    socket.data.username = room.users[color];
+    reply({
+      ok: true, code: room.code, color, fen: room.game.fen(), history: room.game.history(),
+      names: room.names, opponent: room.names[color === "w" ? "b" : "w"],
+      ready: !!(io.sockets.sockets.get(room.players.w) && io.sockets.sockets.get(room.players.b)),
+      resumeToken: room.resumeTokens[color]
+    });
+    sendRoomState(room.code);
   });
 
   socket.on("makeMove", ({ code, from, to, promotion }, reply = () => {}) => {
@@ -406,7 +451,7 @@ io.on("connection", socket => {
       const move = room.game.move({ from, to, promotion: promotion || "q" });
       if (!move) return reply({ ok: false, error: "Illegal move." });
       io.to(room.code).emit("moveMade", {
-        fen: room.game.fen(), move: { san: move.san, from: move.from, to: move.to },
+        fen: room.game.fen(), move: { san: move.san, from: move.from, to: move.to, color: move.color, captured: move.captured, flags: move.flags, check: room.game.isCheck(), checkmate: room.game.isCheckmate() },
         history: room.game.history(), turn: room.game.turn(),
         gameOver: room.game.isGameOver(),
         status: room.game.isCheckmate() ? "Checkmate" : room.game.isDraw() ? "Draw" : "In progress"
@@ -431,15 +476,53 @@ io.on("connection", socket => {
   socket.on("offerDraw", ({ code }) => { const room=rooms.get(String(code||"").toUpperCase()); if(!room||socket.data.room!==room.code||room.ended||room.game.isGameOver())return; room.drawOffer=socket.id; socket.to(room.code).emit("drawOffered",{name:socket.data.name||"Opponent"}); });
   socket.on("respondDraw", ({ code, accept }) => { const room=rooms.get(String(code||"").toUpperCase()); if(!room||socket.data.room!==room.code||!room.drawOffer||room.drawOffer===socket.id)return; if(accept)recordRoomResult(room,"1/2-1/2","agreement");else io.to(room.code).emit("systemMessage",{text:"Draw offer declined."}); room.drawOffer=null; });
   socket.on("resign", ({ code }) => { const room=rooms.get(String(code||"").toUpperCase()); if(!room||socket.data.room!==room.code||room.ended||room.game.isGameOver())return; recordRoomResult(room,socket.data.color==="w"?"0-1":"1-0","resignation"); });
+  socket.on("requestRematch", ({ code }, reply = () => {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || socket.data.room !== room.code || !room.ended || !Object.values(room.players).includes(socket.id)) return reply({ ok: false, error: "This match is not ready for a rematch." });
+    if (room.rematchRequest) return reply({ ok: false, error: "A rematch request is already pending." });
+    room.rematchRequest = socket.id;
+    socket.to(room.code).emit("rematchRequested", { name: socket.data.name || "Your opponent" });
+    reply({ ok: true });
+  });
+  socket.on("respondRematch", ({ code, accept }, reply = () => {}) => {
+    const room = rooms.get(String(code || "").toUpperCase());
+    if (!room || socket.data.room !== room.code || !room.ended || !room.rematchRequest || room.rematchRequest === socket.id || !Object.values(room.players).includes(socket.id)) return reply({ ok: false, error: "There is no rematch request to answer." });
+    if (accept) {
+      room.game = new Chess();
+      room.recorded = false;
+      room.ended = false;
+      room.drawOffer = null;
+      room.rematchRequest = null;
+      room.chat = [];
+      io.to(room.code).emit("rematchStarted", { code: room.code, fen: room.game.fen(), names: room.names, ready: true });
+    } else {
+      room.rematchRequest = null;
+      io.to(room.code).emit("rematchDeclined");
+    }
+    reply({ ok: true });
+  });
   socket.on("leaveRoom", () => leaveRoom(socket));
   socket.on("disconnect", () => {
     removeFromQueue(socket);
-    leaveRoom(socket);
+    if (socket.data.room) {
+      io.to(socket.data.room).emit("opponentDisconnected", { name: socket.data.name || "Your opponent" });
+      const oldTimer = reconnectTimeouts.get(socket.id);
+      if (oldTimer) clearTimeout(oldTimer);
+      const timer = setTimeout(() => {
+        reconnectTimeouts.delete(socket.id);
+        if (!io.sockets.sockets.has(socket.id)) leaveRoom(socket);
+      }, 120000);
+      timer.unref?.();
+      reconnectTimeouts.set(socket.id, timer);
+    }
     profiles.delete(socket.id);
   });
 });
 
 function leaveRoom(socket) {
+  const timer = reconnectTimeouts.get(socket.id);
+  if (timer) clearTimeout(timer);
+  reconnectTimeouts.delete(socket.id);
   const code = socket.data.room;
   if (!code) return;
   const room = rooms.get(code);

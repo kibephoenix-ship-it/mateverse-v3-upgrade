@@ -5,6 +5,10 @@ MateVerse is a responsive chess web app with a futuristic gaming interface. This
 ## Features
 
 - Legal chess moves, move highlighting, move history, castling, en passant and promotion (powered by chess.js).
+- Drag-and-drop and click-to-move controls, with visible legal targets and last-move highlights; optional online premoves are queued from Settings.
+- Local position-evaluation bar and move-quality badges, plus backward/forward review controls after a completed game.
+- Separate move, capture, check, castle, game-over and low-clock audio cues, with vibration where supported by the browser.
+- Low-time clock alerts, an in-game server-connection banner, computer-game recovery and online-room resume credentials in LocalStorage, plus one-click rematch requests.
 - Computer opponent with beginner, intermediate and advanced search levels.
 - Mate Coach move suggestions and chess-piece learning guide.
 - Online matchmaking and private rooms using Socket.IO, with copyable invite codes, synchronized player names and move history.
@@ -18,7 +22,7 @@ MateVerse is a responsive chess web app with a futuristic gaming interface. This
 - Computer games remain ready until you press **Start game**; the clock and move input begin only then.
 - Mate Coach suggests and explains a legal move for the current position.
 - Computer-game PGNs and practice win/loss/draw totals are saved to a signed-in player's history without changing online rating.
-- Personal settings include dark/light appearance, board palette, sound, board orientation, computer strength and English, Spanish, French or Kiswahili interface labels.
+- Personal settings include dark/light appearance, board palette, sound, premoves, board orientation, computer strength and English, Spanish, French or Kiswahili interface labels.
 - Completed games show a winner banner above the board; online room chat includes delivery errors and recent room messages.
 - Board flip, move sounds, PGN export, FEN copy and responsive layout.
 - `/health` endpoint for basic hosting health checks.
@@ -73,17 +77,17 @@ Deploy to a Node.js host that supports WebSockets and persistent disk storage.
 This is a feature-rich prototype, **not yet a production-grade chess service**.
 
 - The computer opponent is a small JavaScript search, not Stockfish; its strongest setting is not grandmaster strength.
-- The coach gives heuristics-based suggestions, not guaranteed best moves.
+- The coach, evaluation bar and move badges use the app's local JavaScript search/material heuristics. They are estimates, not Stockfish/WASM analysis or guaranteed best moves.
 - Clocks currently apply to games against the computer. Online server-authoritative clocks are not implemented.
 - Accounts use scrypt password hashing, verified email for new password accounts, optional Google ID-token verification and HTTP-only cookies, but the prototype still needs stronger rate limiting, CSRF protection, password reset, session persistence/rotation, security testing, review moderation and privacy/legal pages before a public launch.
 - Online rooms and matchmaking are in-memory and work on one server process. A server restart ends active matches; multi-server scaling needs a Socket.IO adapter and shared database/queue.
 - Elo updates are applied to rated online games when both players are signed in. There is no anti-cheat or rating-abuse detection yet.
-- Tournaments, spectators, user reporting, reconnect/resume, server-authoritative online clocks and a Stockfish worker are not included in this version.
+- Tournaments, spectators, user reporting, server-authoritative online clocks and Stockfish/WASM are not included. Socket.IO recovers brief online disconnects and stored room credentials can reattach after a page refresh for up to two minutes while the hosting process remains alive; server restarts still end active matches.
 - The browser chess library is loaded from jsDelivr, so the board requires internet access.
 
 ## Before accepting real users
 
-Have a developer review authentication, session and data security; move JSON storage to PostgreSQL; add rate limiting and CSRF protection; add moderation and abuse reporting; implement server-side clocks/reconnect; integrate Stockfish in a Web Worker; and run automated multiplayer/security tests.
+Have a developer review authentication, session and data security; move JSON storage to PostgreSQL; add rate limiting and CSRF protection; add moderation and abuse reporting; implement server-side clocks; integrate Stockfish in a Web Worker if full engine-grade analysis is required; and run automated multiplayer/security tests.
 
 ## Main files
 

@@ -1,7 +1,7 @@
 import { Chess } from "/vendor/chess.js";
 
 const $ = id => document.getElementById(id);
-const socket = io();
+const socket = io({reconnection:true,reconnectionAttempts:Infinity,reconnectionDelay:500,reconnectionDelayMax:5000,timeout:20000});
 const translations = {
  en: {navPlay:"⚔ Play",navCoach:"✦ Coach",navLearn:"♟ Learn",navRank:"🏆 Rankings",navHistory:"📜 My games",navSettings:"⚙ Settings",matchControl:"MATCH CONTROL",modeComputer:"Computer",modeOnline:"Online",modeFriend:"Friend",computerStrength:"Computer strength",findMatch:"🌐 Find global match",createPrivateRoom:"＋ Create private room",gameStatus:"GAME STATUS",ready:"Ready to play",readyDetail:"Press Start game when you're ready.",startGame:"Start game",gameInProgress:"Game in progress",newGame:"New game",undo:"Undo",offerDraw:"Offer draw",resign:"Resign",mateCoach:"✦ MATE COACH",liveAnalysis:"LIVE ANALYSIS",strongMove:"✦ Find a strong move",liveChat:"LIVE MATCH CHAT",roomOnly:"ROOM ONLY",send:"Send",moveHistory:"MOVE HISTORY",personalize:"MAKE IT YOURS",settingsTitle:"Your settings",settingsDescription:"Choose how MateVerse looks, sounds and speaks. Your preferences stay on this device.",language:"Language",languageHelp:"Choose the interface language.",appearance:"Appearance",appearanceHelp:"Switch between dark and light mode.",boardColors:"Board colors",boardColorsHelp:"Pick a board palette.",strengthHelp:"Make the computer easier or more challenging.",moveSounds:"Move sounds",soundHelp:"Play a sound after each move.",flipBoard:"Flip board",flipHelp:"Show your pieces at the bottom.",wins:"Wins",winnerSuffix:"wins",losses:"Losses",draws:"Draws",whiteToMove:"White to move",blackToMove:"Black to move",check:"Check",checkmate:"Checkmate",draw:"Draw",youWin:"You win",youLose:"You lose",gameDraw:"Game drawn",noMoves:"No legal moves available.",askCoach:"Get a move suggestion with a quick explanation.",coachStart:"Start a game, then ask Mate Coach to analyse your position.",noHistory:"No saved games yet."},
  es: {navPlay:"⚔ Jugar",navCoach:"✦ Entrenador",navLearn:"♟ Aprender",navRank:"🏆 Clasificación",navHistory:"📜 Mis partidas",navSettings:"⚙ Ajustes",matchControl:"CONTROL DE PARTIDA",modeComputer:"Computadora",modeOnline:"En línea",modeFriend:"Amigo",computerStrength:"Nivel de la computadora",findMatch:"🌐 Buscar partida",createPrivateRoom:"＋ Crear sala privada",gameStatus:"ESTADO DE PARTIDA",ready:"Listo para jugar",readyDetail:"Pulsa Iniciar partida cuando quieras.",startGame:"Iniciar partida",gameInProgress:"Partida en curso",newGame:"Nueva partida",undo:"Deshacer",offerDraw:"Ofrecer tablas",resign:"Rendirse",mateCoach:"✦ MATE COACH",liveAnalysis:"ANÁLISIS EN VIVO",strongMove:"✦ Buscar una buena jugada",liveChat:"CHAT DE PARTIDA",roomOnly:"SOLO EN LA SALA",send:"Enviar",moveHistory:"HISTORIAL DE JUGADAS",personalize:"PERSONALÍZALO",settingsTitle:"Tus ajustes",settingsDescription:"Elige el aspecto, el sonido y el idioma. Tus preferencias se guardan en este dispositivo.",language:"Idioma",languageHelp:"Elige el idioma de la interfaz.",appearance:"Apariencia",appearanceHelp:"Cambia entre modo oscuro y claro.",boardColors:"Colores del tablero",boardColorsHelp:"Elige una paleta para el tablero.",strengthHelp:"Haz que la computadora sea más fácil o desafiante.",moveSounds:"Sonidos de jugada",soundHelp:"Reproducir un sonido después de cada jugada.",flipBoard:"Girar tablero",flipHelp:"Muestra tus piezas en la parte inferior.",wins:"Victorias",winnerSuffix:"gana",losses:"Derrotas",draws:"Tablas",whiteToMove:"Juegan blancas",blackToMove:"Juegan negras",check:"Jaque",checkmate:"Jaque mate",draw:"Tablas",youWin:"Has ganado",youLose:"Has perdido",gameDraw:"Partida en tablas",noMoves:"No hay jugadas legales.",askCoach:"Pide una sugerencia de jugada con una breve explicación.",coachStart:"Inicia una partida y pide a Mate Coach que analice la posición.",noHistory:"Todavía no hay partidas guardadas."},
@@ -14,6 +14,7 @@ let game = new Chess(), mode = "computer", difficulty = [1,2,3].includes(Number(
 let selected = null, targets = [], myColor = "w", roomCode = "";
 let onlineReady = false, aiBusy = false, lastMove = null, gameStarted = false, gameResultSaved = false;
 let account = null, loginMode = false, boardFlipped = settings.flipped===true, clockSeconds = 300, clocks = {w:300,b:300}, clockTimer = null, flagged = false, soundOn = settings.sound!==false;
+let premove = null, reviewMode = false, reviewIndex = 0, positionHistory = [game.fen()], moveGrades = [];
 let activeGameId = makeGameId();
 let name = localStorage.getItem("mateverse-name") || "Guest";
 let stats = JSON.parse(localStorage.getItem("mateverse-stats") || '{"wins":0,"games":0}');
@@ -44,6 +45,7 @@ function applySettings(){
  $("difficulty").value=String(difficulty);
  $("sound-toggle").checked=soundOn;
  $("settings-sound").checked=soundOn;
+ $("settings-premoves").checked=settings.premoves===true;
  $("settings-flip").checked=boardFlipped;
  applyLanguage();
 }
@@ -58,6 +60,8 @@ function showWinner(result,reason=""){
  $("winner-detail").textContent=reason;
  $("winner-banner").classList.toggle("draw",!winningColor);
  $("winner-banner").classList.toggle("victory",winningColor===myColor);
+ $("rematch").hidden=false;
+ $("rematch").textContent=mode==="online"?"Request rematch":"Play again";
  $("winner-banner").hidden=false;
 }
 function updateProfileStats(user){
@@ -72,6 +76,7 @@ function updateProfileStats(user){
 function saveResult(){
  if(!game.isGameOver()||gameResultSaved)return;
  gameResultSaved=true;
+ playCue("gameover");
  const result=resultFromGame();
  stats.games++;
  if(result==="1/2-1/2")stats.draws=(stats.draws||0)+1;
@@ -93,32 +98,43 @@ function saveResult(){
 function clearSelection(){selected=null;targets=[];}
 function render(){
  const board=$("board");board.innerHTML="";
+ const viewGame=reviewMode?new Chess(positionHistory[reviewIndex]||game.fen()):game;
+ const highlighted=reviewMode&&reviewIndex>0?game.history({verbose:true})[reviewIndex-1]:lastMove;
  const orientation=(boardFlipped ? (myColor==="w"?"b":"w") : myColor);
  const ranks=orientation==="w"?[8,7,6,5,4,3,2,1]:[1,2,3,4,5,6,7,8];
  const files=orientation==="w"?"abcdefgh":"hgfedcba";
- const legal=game.moves({verbose:true});
  for(const rank of ranks)for(const file of files){
-  const sq=file+rank,p=game.get(sq),btn=document.createElement("button");
+  const sq=file+rank,p=viewGame.get(sq),btn=document.createElement("button");
   btn.className="square "+((files.indexOf(file)+rank)%2?"dark":"light");
   if(selected===sq)btn.classList.add("selected");
-  if(lastMove&&(lastMove.from===sq||lastMove.to===sq))btn.classList.add("last-move");
-  btn.setAttribute("aria-label",sq+(p?` ${p.color} ${p.type}`:""));
+  if(premove&&(premove.from===sq||premove.to===sq))btn.classList.add("premove-square");
+  if(highlighted&&(highlighted.from===sq||highlighted.to===sq))btn.classList.add("last-move");
+  btn.setAttribute("aria-label",sq+(p?` ${p.color} ${p.type}`:""));btn.dataset.square=sq;
   if(p){const span=document.createElement("span");span.className="piece "+(p.color==="w"?"white":"black");span.textContent=glyph[p.color][p.type];btn.append(span);}
   if(targets.includes(sq)){const dot=document.createElement("span");dot.className=p?"legal-capture":"legal-dot";btn.append(dot);}
-  btn.addEventListener("click",()=>squareClick(sq));board.append(btn);
+  btn.draggable=!!p&&!reviewMode;
+  btn.addEventListener("click",()=>squareClick(sq));
+  btn.addEventListener("dragstart",event=>dragStart(event,sq));
+  btn.addEventListener("dragover",event=>event.preventDefault());
+  btn.addEventListener("drop",event=>{event.preventDefault();dropMove(sq);});
+  board.append(btn);
  }
- renderMoves();updateGameStatus();updateStats();
+ renderMoves();updateGameStatus(viewGame);updateEvaluation(viewGame);updateClocks();updateReviewControls();persistActiveGame();updateStats();
 }
-function renderMoves(){const ol=$("move-list"),h=game.history();ol.innerHTML="";$("move-total").textContent=h.length+" plies";if(!h.length){const li=document.createElement("li");li.className="empty";li.textContent="Your game moves appear here.";ol.append(li);return;}for(let i=0;i<h.length;i+=2){const li=document.createElement("li");li.textContent=`${Math.floor(i/2)+1}. ${h[i]}${h[i+1]?"   "+h[i+1]:""}`;ol.append(li);}}
-function updateGameStatus(){if(game.isCheckmate()){const winnerColor=game.turn()==="w"?"b":"w";setStatus(t("checkmate"),winnerColor===myColor?t("youWin"):t("youLose"));}else if(game.isDraw())setStatus(t("draw"),game.isStalemate()?"Stalemate.":"Draw by chess rules.");else if(mode!=="online"&&!gameStarted)setStatus(t("ready"),t("readyDetail"));else setStatus((game.turn()==="w"?t("whiteToMove"):t("blackToMove"))+(game.isCheck()?` · ${t("check")}!`:""),mode==="online"?(onlineReady?`Room ${roomCode}`:"Waiting for opponent…"):"Choose a piece to see its legal moves.");}
+function renderMoves(){const ol=$("move-list"),h=game.history();ol.innerHTML="";$("move-total").textContent=h.length+" plies";if(!h.length){const li=document.createElement("li");li.className="empty";li.textContent="Your game moves appear here.";ol.append(li);return;}for(let i=0;i<h.length;i+=2){const li=document.createElement("li"),white=document.createElement("span"),black=document.createElement("span");li.append(document.createTextNode(`${Math.floor(i/2)+1}. `));white.textContent=h[i];white.className="move-san";white.title=`${moveGrades[i]?.label||"Unclassified"} move`;white.dataset.grade=moveGrades[i]?.key||"";li.append(white);if(h[i+1]){black.textContent=h[i+1];black.className="move-san";black.title=`${moveGrades[i+1]?.label||"Unclassified"} move`;black.dataset.grade=moveGrades[i+1]?.key||"";li.append(document.createTextNode("   "),black);}ol.append(li);}}
+function updateGameStatus(position=game){if(position.isCheckmate()){const winnerColor=position.turn()==="w"?"b":"w";setStatus(t("checkmate"),winnerColor===myColor?t("youWin"):t("youLose"));}else if(position.isDraw())setStatus(t("draw"),position.isStalemate()?"Stalemate.":"Draw by chess rules.");else if(mode!=="online"&&!gameStarted)setStatus(t("ready"),t("readyDetail"));else setStatus((position.turn()==="w"?t("whiteToMove"):t("blackToMove"))+(position.isCheck()?` · ${t("check")}!`:""),mode==="online"?(onlineReady?`Room ${roomCode}`:"Waiting for opponent…"):"Choose a piece to see its legal moves.");}
+function selectionMoves(square,color){const fen=game.fen().split(" ");fen[1]=color;return new Chess(fen.join(" ")).moves({square,verbose:true}).map(move=>move.to);}
 function squareClick(sq){
- if(game.isGameOver()||aiBusy||flagged||(mode!=="online"&&!gameStarted))return;
- if(mode==="online"&&(!onlineReady||game.turn()!==myColor))return;
+ if(reviewMode||game.isGameOver()||aiBusy||flagged||(mode!=="online"&&!gameStarted))return;
+ const isPremove=mode==="online"&&onlineReady&&game.turn()!==myColor&&settings.premoves===true;
+ if(mode==="online"&&(!onlineReady||game.turn()!==myColor)&&!isPremove)return;
  const p=game.get(sq);
- if(selected&&targets.includes(sq)){makeMove(selected,sq);return;}
- if(p&&p.color===game.turn()){selected=sq;targets=game.moves({square:sq,verbose:true}).map(m=>m.to);}else clearSelection();
+ if(selected&&targets.includes(sq)){if(isPremove){premove={from:selected,to:sq};clearSelection();setStatus("Premove queued","It will be played automatically if it remains legal.");render();}else makeMove(selected,sq);return;}
+ if(p&&p.color===(isPremove?myColor:game.turn())){selected=sq;targets=isPremove?selectionMoves(sq,myColor):game.moves({square:sq,verbose:true}).map(m=>m.to);}else clearSelection();
  render();
 }
+function dragStart(event,square){if(reviewMode||game.isGameOver()||aiBusy)return;const piece=game.get(square);if(!piece)return;const premoving=mode==="online"&&onlineReady&&game.turn()!==myColor&&settings.premoves===true;if((mode==="online"&&(!onlineReady||game.turn()!==myColor)&&!premoving)||(mode!=="online"&&!gameStarted)||piece.color!==(premoving?myColor:game.turn())){event.preventDefault();return;}selected=square;targets=premoving?selectionMoves(square,myColor):game.moves({square,verbose:true}).map(move=>move.to);event.dataTransfer?.setData("text/plain",square);document.querySelector(`[data-square="${square}"]`)?.classList.add("selected");for(const target of targets){const cell=document.querySelector(`[data-square="${target}"]`);if(cell&&!cell.querySelector(".legal-dot,.legal-capture")){const marker=document.createElement("span");marker.className=game.get(target)?"legal-capture":"legal-dot";cell.append(marker);}}}
+function dropMove(to){if(!selected)return;const from=selected;if(targets.includes(to)){if(mode==="online"&&game.turn()!==myColor){premove={from,to};clearSelection();setStatus("Premove queued","It will be played automatically if it remains legal.");render();}else makeMove(from,to);}else{clearSelection();render();}}
 function makeMove(from,to,promotion="q"){
     if(mode!=="online"&&!gameStarted)return;
     if(mode==="online"){
@@ -126,18 +142,74 @@ function makeMove(from,to,promotion="q"){
         const snapshot=game.fen();
         let m;
         try{m=game.move({from,to,promotion});if(!m)return;}catch(e){toast("Illegal move.");return;}
-        clearSelection();lastMove={from:m.from,to:m.to};playMoveSound(m);render();
+        clearSelection();lastMove={from:m.from,to:m.to};playMoveSound(m);trackPosition(snapshot,m);render();
         socket.emit("makeMove",{code:roomCode,from,to,promotion},r=>{
-            if(!r?.ok){game.load(snapshot);clearSelection();lastMove=null;render();toast(r?.error||"Move not sent.");socket.emit("getRoomState",{code:roomCode});}
+            if(!r?.ok){game.load(snapshot);clearSelection();lastMove=null;rebuildAnalysis();render();toast(r?.error||"Move not sent.");socket.emit("getRoomState",{code:roomCode});}
         });
         return;
     }
  try{
-  const m=game.move({from,to,promotion});if(!m)return;
-  clearSelection();lastMove={from:m.from,to:m.to};playMoveSound(m);
+  const before=game.fen(),m=game.move({from,to,promotion});if(!m)return;
+  clearSelection();lastMove={from:m.from,to:m.to};playMoveSound(m);trackPosition(before,m);
   render();if(game.isGameOver())saveResult();
   if(mode==="computer"&&!game.isGameOver()&&game.turn()==="b"){aiBusy=true;setStatus("Computer thinking…","Calculating a reply.");setTimeout(computerMove,350);}
  }catch(e){toast("Illegal move.");}
+}
+function classifyMove(beforeFen,afterGame,move){
+ const before=evaluate(new Chess(beforeFen),"w")/100,after=evaluate(afterGame,"w")/100;
+ const loss=move.color==="w"?before-after:after-before;
+ if(loss<=.1)return{label:"Best",key:"best"};
+ if(loss<=.3)return{label:"Excellent",key:"excellent"};
+ if(loss<=.8)return{label:"Inaccuracy",key:"inaccuracy"};
+ if(loss<=1.5)return{label:"Mistake",key:"mistake"};
+ return{label:"Blunder",key:"blunder"};
+}
+function trackPosition(beforeFen,move){moveGrades.push(classifyMove(beforeFen,game,move));positionHistory.push(game.fen());}
+function rebuildAnalysis(){
+ const replay=new Chess();positionHistory=[replay.fen()];moveGrades=[];
+ for(const san of game.history()){
+  const before=replay.fen(),move=replay.move(san);
+  moveGrades.push(classifyMove(before,replay,move));positionHistory.push(replay.fen());
+ }
+}
+function updateEvaluation(position){
+ const score=evaluate(position,"w")/100,wonBy=position.isCheckmate()?(position.turn()==="w"?"b":"w"):null;
+ const label=wonBy?"M0":`${score>0?"+":""}${score.toFixed(1)}`;
+ $("evaluation-label").textContent=label;
+ const whiteShare=wonBy?(wonBy==="w"?100:0):100/(1+Math.exp(-Math.max(-12,Math.min(12,score))/3));
+ $("evaluation-fill").style.height=`${whiteShare}%`;
+ $("evaluation-wrap")?.setAttribute("aria-label",wonBy?`${wonBy==="w"?"White":"Black"} has checkmate`:`White ${score.toFixed(1)} pawns`);
+}
+function updateReviewControls(){
+ const canReview=gameResultSaved||game.isGameOver();
+ $("review-controls").hidden=!canReview;
+ $("review-open").hidden=reviewMode;
+ $("review-position").textContent=reviewMode?`${reviewIndex} / ${game.history().length} ply`:"Live game";
+ $("review-prev").disabled=!reviewMode||reviewIndex<=0;
+ $("review-start").disabled=!reviewMode||reviewIndex<=0;
+ $("review-next").disabled=!reviewMode||reviewIndex>=game.history().length;
+ $("review-end").disabled=!reviewMode||reviewIndex>=game.history().length;
+}
+function setReviewPosition(index){reviewMode=true;reviewIndex=Math.max(0,Math.min(game.history().length,index));clearSelection();render();}
+function persistActiveGame(){
+ if(mode!=="computer"||!gameStarted||gameResultSaved||game.isGameOver()){localStorage.removeItem("mateverse-active-game");return;}
+ localStorage.setItem("mateverse-active-game",JSON.stringify({fen:game.fen(),moves:game.history(),clocks,clockSeconds,started:true,difficulty}));
+}
+function restoreActiveGame(){
+ const raw=localStorage.getItem("mateverse-active-game");if(!raw)return false;
+ try{
+  const saved=JSON.parse(raw);if(!Array.isArray(saved.moves))throw new Error("Saved game is invalid.");
+  const restored=new Chess();for(const san of saved.moves)restored.move(san);
+  if(saved.fen&&restored.fen()!==saved.fen)throw new Error("Saved game position does not match its move history.");
+  if(restored.isGameOver())throw new Error("Saved game has already ended.");
+  game=restored;mode="computer";gameStarted=true;difficulty=[1,2,3].includes(Number(saved.difficulty))?Number(saved.difficulty):difficulty;
+  if(saved.clocks&&Number.isFinite(saved.clocks.w)&&Number.isFinite(saved.clocks.b))clocks={w:saved.clocks.w,b:saved.clocks.b};
+  if(Number.isFinite(saved.clockSeconds))clockSeconds=saved.clockSeconds;
+  if([...$("time-control").options].some(option=>Number(option.value)===clockSeconds))$("time-control").value=String(clockSeconds);
+  const move=game.history({verbose:true}).at(-1);lastMove=move?{from:move.from,to:move.to}:null;rebuildAnalysis();updateStartButton();startClock();
+  toast("Your in-progress game was restored.");
+  return true;
+ }catch(error){localStorage.removeItem("mateverse-active-game");console.warn("Could not restore saved game:",error);return false;}
 }
 function evaluate(chess,side){
  let score=0;const board=chess.board();
@@ -166,7 +238,7 @@ function chooseMove(chess,side,level=2){
  }
  return best;
 }
-function computerMove(){if(mode!=="computer"||game.turn()!=="b"||game.isGameOver()||flagged){aiBusy=false;return;}const m=chooseMove(game,"b",difficulty);if(m){const made=game.move({from:m.from,to:m.to,promotion:m.promotion||"q"});lastMove={from:made.from,to:made.to};playMoveSound(made);}aiBusy=false;render();if(game.isGameOver())saveResult();}
+function computerMove(){if(mode!=="computer"||game.turn()!=="b"||game.isGameOver()||flagged){aiBusy=false;return;}const before=game.fen(),m=chooseMove(game,"b",difficulty);if(m){const made=game.move({from:m.from,to:m.to,promotion:m.promotion||"q"});lastMove={from:made.from,to:made.to};playMoveSound(made);trackPosition(before,made);}aiBusy=false;render();if(game.isGameOver())saveResult();}
 function explainMove(m){
  const piece=game.get(m.from);
  const labels={p:"pawn",n:"knight",b:"bishop",r:"rook",q:"queen",k:"king"};
@@ -188,11 +260,11 @@ function giveHint(){
  const desc=`Suggested move: ${m.san} (${m.from} → ${m.to}). ${explainMove(m)} A suggestion is not a guaranteed win.`;
  $("coach-message").textContent=desc;$("coach-result").textContent=desc;
 }
-function resetGame(){game=new Chess();clearSelection();lastMove=null;aiBusy=false;gameStarted=false;gameResultSaved=false;activeGameId=makeGameId();flagged=false;$("winner-banner").hidden=true;resetClocks();updateStartButton();render();$("coach-message").textContent=t("askCoach");$("coach-result").textContent=t("coachStart");}
+function resetGame(){game=new Chess();clearSelection();premove=null;reviewMode=false;reviewIndex=0;positionHistory=[game.fen()];moveGrades=[];lastMove=null;aiBusy=false;gameStarted=false;gameResultSaved=false;activeGameId=makeGameId();flagged=false;$("winner-banner").hidden=true;$("rematch").hidden=true;resetClocks();updateStartButton();render();$("coach-message").textContent=t("askCoach");$("coach-result").textContent=t("coachStart");}
 function updateStartButton(){$("start-game").hidden=mode==="online";$("start-game").disabled=gameStarted;$("start-game").textContent=gameStarted?t("gameInProgress"):t("startGame");}
 function startGame(){if(mode==="online"||gameStarted)return;gameStarted=true;updateStartButton();updateClocks();startClock();render();}
 function showMode(next){
- mode=next;$("chat-card").hidden=mode!=="online";updateClocks();document.querySelectorAll(".mode-choice").forEach(b=>b.classList.toggle("selected",b.dataset.mode===mode));
+ const previous=mode;if(previous===next)return;mode=next;if(previous==="online"&&mode!=="online")localStorage.removeItem("mateverse-online-session");premove=null;reviewMode=false;$("chat-card").hidden=mode!=="online";updateClocks();document.querySelectorAll(".mode-choice").forEach(b=>b.classList.toggle("selected",b.dataset.mode===mode));
  $("computer-options").hidden=mode!=="computer";$("online-options").hidden=mode!=="online";$("friend-options").hidden=mode!=="friend";
  $("black-name").textContent=mode==="computer"?t("modeComputer"):mode==="online"?"Online opponent":t("modeFriend");
  $("black-elo").textContent=mode==="computer"?"AI":"ONLINE";$("white-elo").textContent="YOU";$("invite-tools").hidden=true;
@@ -205,8 +277,10 @@ function showMode(next){
  myColor="w";resetGame();
 }
 function setRoom(result,friend=false){
- roomCode=result.code;myColor=result.color;onlineReady=!!result.ready;$ ("chat-card").hidden=false;$("chat-messages").innerHTML="";
- game=new Chess(result.fen);clearSelection();lastMove=null;gameResultSaved=false;$("winner-banner").hidden=true;
+ roomCode=result.code;myColor=result.color;onlineReady=!!result.ready;$("chat-card").hidden=false;$("chat-messages").innerHTML="";
+ game=new Chess(result.fen);if(Array.isArray(result.history)){game=new Chess();result.history.forEach(move=>game.move(move));}
+ clearSelection();premove=null;reviewMode=false;lastMove=game.history({verbose:true}).at(-1)||null;gameResultSaved=false;positionHistory=[game.fen()];moveGrades=[];rebuildAnalysis();$("winner-banner").hidden=true;$("rematch").hidden=true;
+ if(result.resumeToken)localStorage.setItem("mateverse-online-session",JSON.stringify({code:roomCode,color:myColor,token:result.resumeToken}));
  updateRoomPlayers(result.names||{w:result.color==="w"?name:result.opponent||"Opponent",b:result.color==="b"?name:result.ready?result.opponent||"Opponent":"Waiting for player"});
  $("invite-tools").hidden=!friend;
  if(friend)$("invite-code").value=roomCode;
@@ -214,6 +288,18 @@ function setRoom(result,friend=false){
   ?`Invite code: ${roomCode}. Share this code; your friend can choose Online and enter it to join.`
   :`Connected to ${result.opponent||"your opponent"} in room ${roomCode}. You are ${myColor==="w"?"White":"Black"}.`;
  render();
+}
+function resumeStoredRoom(){
+ const raw=localStorage.getItem("mateverse-online-session");if(!raw)return;
+ try{
+  const saved=JSON.parse(raw);
+  if(typeof saved.code!=="string"||!["w","b"].includes(saved.color)||typeof saved.token!=="string")throw new Error("Saved online room credentials are invalid.");
+  showMode("online");
+  socket.emit("resumeRoom",saved,result=>{
+   if(!result?.ok){localStorage.removeItem("mateverse-online-session");$("online-message").textContent=result?.error||"This match could not be resumed.";toast("Your previous online match is no longer available.");return;}
+   setRoom(result);showView("play");
+  });
+ }catch(error){localStorage.removeItem("mateverse-online-session");console.warn("Could not resume saved online room:",error);}
 }
 function updateRoomPlayers(names){
  $("white-name").textContent=names.w||"Waiting for player";
@@ -237,15 +323,24 @@ function loadRoomPosition(data){
   data.history.forEach(move=>syncedGame.move(move));
   game=syncedGame;
  }else game.load(data.fen);
+ rebuildAnalysis();
 }
 function createRoom(){const code=Math.random().toString(36).slice(2,8).toUpperCase();socket.emit("createRoom",{code},r=>{if(!r?.ok)return toast(r?.error||"Could not create room.");setRoom(r,true);});}
 function joinRoom(){const code=$("room-code").value.trim().toUpperCase();if(!code)return toast("Enter a room code.");socket.emit("joinRoom",{code},r=>{if(!r?.ok)return toast(r?.error||"Could not join.");setRoom(r);});}
 
 function formatClock(seconds){const m=Math.floor(Math.max(0,seconds)/60),s=Math.max(0,seconds)%60;return `${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`;}
 function resetClocks(){clearInterval(clockTimer);clockSeconds=Number($("time-control")?.value||300);clocks={w:clockSeconds,b:clockSeconds};flagged=false;updateClocks();if(gameStarted)startClock();}
-function startClock(){clearInterval(clockTimer);if(clockSeconds===0||mode==="online")return;clockTimer=setInterval(()=>{if(game.isGameOver()||flagged||!gameStarted||mode==="online")return;const side=game.turn();clocks[side]=Math.max(0,clocks[side]-1);updateClocks();if(clocks[side]===0){flagged=true;clearInterval(clockTimer);setStatus("Time expired",`${side==="w"?"Black":"White"} wins on time.`);toast("Time expired.");}},1000);}
-function updateClocks(){if($("white-clock"))$("white-clock").textContent=mode==="online"?"—":clockSeconds?formatClock(clocks.w):"∞";if($("black-clock"))$("black-clock").textContent=mode==="online"?"—":clockSeconds?formatClock(clocks.b):"∞";$("white-clock")?.classList.toggle("active-clock",mode!=="online"&&gameStarted&&game.turn()==="w");$("black-clock")?.classList.toggle("active-clock",mode!=="online"&&gameStarted&&game.turn()==="b");}
-function playMoveSound(move){if(!soundOn)return;try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;const c=new C(),o=c.createOscillator(),g=c.createGain();o.type="sine";o.frequency.value=move?.captured?220:440;g.gain.setValueAtTime(.045,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.09);o.connect(g);g.connect(c.destination);o.start();o.stop(c.currentTime+.1);o.onended=()=>c.close();}catch(e){}}
+function startClock(){clearInterval(clockTimer);if(clockSeconds===0||mode==="online")return;clockTimer=setInterval(()=>{if(game.isGameOver()||flagged||!gameStarted||mode==="online")return;const side=game.turn();clocks[side]=Math.max(0,clocks[side]-1);updateClocks();if(clocks[side]>0&&clocks[side]<=30)playCue("tick");if(clocks[side]===0){flagged=true;clearInterval(clockTimer);setStatus("Time expired",`${side==="w"?"Black":"White"} wins on time.`);playCue("gameover");toast("Time expired.");}persistActiveGame();},1000);}
+function updateClocks(){if($("white-clock"))$("white-clock").textContent=mode==="online"?"—":clockSeconds?formatClock(clocks.w):"∞";if($("black-clock"))$("black-clock").textContent=mode==="online"?"—":clockSeconds?formatClock(clocks.b):"∞";$("white-clock")?.classList.toggle("active-clock",mode!=="online"&&gameStarted&&game.turn()==="w");$("black-clock")?.classList.toggle("active-clock",mode!=="online"&&gameStarted&&game.turn()==="b");$("white-clock")?.classList.toggle("low-time",mode!=="online"&&clockSeconds>0&&clocks.w<=30);$("black-clock")?.classList.toggle("low-time",mode!=="online"&&clockSeconds>0&&clocks.b<=30);}
+function playCue(kind){
+ if(!soundOn)return;
+ try{const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;const context=new Audio(),notes=kind==="gameover"?[330,440,554]:kind==="check"?[740]:kind==="castle"?[520,660]:kind==="capture"?[240]:kind==="tick"?[620]:[440];notes.forEach((frequency,index)=>{const oscillator=context.createOscillator(),gain=context.createGain(),start=context.currentTime+index*.09;oscillator.type="sine";oscillator.frequency.value=frequency;gain.gain.setValueAtTime(kind==="tick"?.012:.045,start);gain.gain.exponentialRampToValueAtTime(.001,start+.09);oscillator.connect(gain);gain.connect(context.destination);oscillator.start(start);oscillator.stop(start+.1);oscillator.onended=()=>{if(index===notes.length-1)context.close();};});}catch(error){console.warn("Audio cue unavailable:",error);}
+}
+function playMoveSound(move){
+ const flags=move?.flags||"";
+ playCue(move?.san?.includes("+")||move?.san?.includes("#")||move?.check?"check":flags.includes("k")||flags.includes("q")?"castle":move?.captured?"capture":"move");
+ if(navigator.vibrate)navigator.vibrate(move?.captured?35:18);
+}
 async function api(path,body,method){const r=await fetch(path,{method:method||(body?"POST":"GET"),headers:body?{"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined,credentials:"same-origin"});const data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||"Request failed.");return data;}
 async function loadLeaderboard(){try{const d=await api("/api/leaderboard");const el=$("leaderboard");el.innerHTML="";if(!d.players.length){el.textContent="No rated players yet. Create an account and play a rated match to claim the first spot.";return;}const table=document.createElement("table");table.innerHTML="<thead><tr><th>#</th><th>PLAYER</th><th>RATING</th><th>GAMES</th><th>W-L-D</th></tr></thead>";const body=document.createElement("tbody");d.players.forEach((u,i)=>{const tr=document.createElement("tr");[i+1,u.displayName,u.rating,u.games,`${u.wins}-${u.losses}-${u.draws}`].forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.append(td);});body.append(tr);});table.append(body);el.append(table);}catch(e){$("leaderboard").textContent="Leaderboard is unavailable while offline.";}}
 async function loadHistory(){if(!account){$("game-history").textContent="Sign in to load your matches.";return;}try{const d=await api("/api/games");const el=$("game-history");el.innerHTML="";if(!d.games.length){el.textContent=t("noHistory");return;}d.games.forEach(g=>{const row=document.createElement("div");row.className="game-record";const title=document.createElement("b");title.textContent=`${g.names[0]} vs ${g.names[1]} · ${g.result}`;const meta=document.createElement("small");meta.textContent=`${new Date(g.date).toLocaleString()} · ${g.reason==="computer"?"Computer game":g.reason}`;const btn=document.createElement("button");btn.className="action ghost";btn.textContent="Download PGN";btn.onclick=()=>downloadText("mateverse-game.pgn",g.pgn);row.append(title,meta,btn);el.append(row);});}catch(e){$("game-history").textContent=e.message;}}
@@ -404,12 +499,29 @@ async function verifyEmailFromLink(){
 function addChat(item){const el=$("chat-messages"),line=document.createElement("p"),who=document.createElement("b"),msg=document.createElement("span");who.textContent=item.name+": ";msg.textContent=item.text;line.append(who,msg);el.append(line);el.scrollTop=el.scrollHeight;}
 function exportPgn(){downloadText("mateverse-game.pgn",game.pgn()||"[Event \"MateVerse\"]\n[Result \"*\"]\n\n*");}
 
-socket.on("connect",()=>{$("connection").textContent="SERVER CONNECTED";socket.emit("setProfile",{name,username:account?.username});});
-socket.on("disconnect",()=>{$("connection").textContent="OFFLINE";});
+socket.on("connect",()=>{
+ $("connection").textContent=socket.recovered?"RECONNECTED":"SERVER CONNECTED";$("connection-banner").hidden=true;
+ socket.emit("setProfile",{name,username:account?.username});
+ if(mode==="online"&&roomCode)socket.emit("getRoomState",{code:roomCode},result=>{if(!result?.ok){onlineReady=false;$("online-message").textContent="Connection restored, but this match could not be resumed. Please create or join another room.";toast("The match could not be resumed.");}});
+ else if(!roomCode)resumeStoredRoom();
+});
+socket.on("disconnect",()=>{
+ $("connection").textContent="RECONNECTING";$("connection-banner").hidden=false;$("connection-banner").textContent="Connection lost. Reconnecting to match server…";
+});
+socket.on("connect_error",()=>{$("connection").textContent="CONNECTING";$("connection-banner").hidden=false;$("connection-banner").textContent="Connecting to match server…";});
+socket.io.on("reconnect_attempt",()=>{$("connection").textContent="RECONNECTING";});
 socket.on("matchFound",data=>{setRoom(data,false);$("online-message").textContent=`Match found! Playing ${data.opponent}. Room ${data.code}.`;});
-socket.on("roomState",data=>{if(mode!=="online"||data.code!==roomCode)return;loadRoomPosition(data);onlineReady=!!(data.players.w&&data.players.b);if(data.names)updateRoomPlayers(data.names);if(Array.isArray(data.chat))restoreChat(data.chat);if(onlineReady)$("online-message").textContent=`Connected to ${data.names?.[myColor==="w"?"b":"w"]||"your opponent"} in room ${roomCode}.`;render();});
-socket.on("moveMade",data=>{if(mode!=="online"||!data?.fen)return;loadRoomPosition(data);clearSelection();if(data.move){lastMove={from:data.move.from,to:data.move.to};playMoveSound(data.move);}render();if(game.isGameOver())saveResult();});
+socket.on("roomState",data=>{if(mode!=="online"||data.code!==roomCode)return;loadRoomPosition(data);onlineReady=!!(data.players.w&&data.players.b)&&(!data.connected||(data.connected.w&&data.connected.b));if(data.names)updateRoomPlayers(data.names);if(Array.isArray(data.chat))restoreChat(data.chat);$("online-message").textContent=onlineReady?`Connected to ${data.names?.[myColor==="w"?"b":"w"]||"your opponent"} in room ${roomCode}.`:"Waiting for your opponent to reconnect…";render();if(premove&&onlineReady&&game.turn()===myColor&&!game.isGameOver()){const queued=premove;premove=null;makeMove(queued.from,queued.to);}});
+socket.on("moveMade",data=>{
+ if(mode!=="online"||!data?.fen)return;
+ loadRoomPosition(data);clearSelection();
+ if(data.move){lastMove={from:data.move.from,to:data.move.to};playMoveSound(data.move);}
+ render();
+ if(game.isGameOver())saveResult();
+ if(premove&&game.turn()===myColor&&!game.isGameOver()){const queued=premove;premove=null;makeMove(queued.from,queued.to);}
+});
 socket.on("systemMessage",data=>{$("online-message").textContent=data.text;});
+socket.on("opponentDisconnected",data=>{onlineReady=false;$("online-message").textContent=`${data.name} lost connection. Waiting for them to reconnect…`;toast("Your opponent is reconnecting.");render();});
 socket.on("opponentLeft",data=>{onlineReady=false;updateRoomPlayers({w:myColor==="w"?name:"Waiting for player",b:myColor==="b"?name:"Waiting for player"});$("online-message").textContent=data.message+" Create a new invite room or join another room.";toast("Opponent disconnected.");});
 socket.on("chatMessage",data=>addChat(data));
 socket.on("friendRequestReceived",()=>{toast("You have a new friend request.");loadCommunity();});
@@ -419,8 +531,11 @@ socket.on("friendChallengeRequest",data=>{
 });
 socket.on("friendChallengeAccepted",data=>{showMode("online");setRoom(data);$("online-message").textContent=`Friend match started with ${data.opponent}.`;showView("play",true);loadCommunity();});
 socket.on("drawOffered",data=>{if(confirm(`${data.name} offers a draw. Accept?`))socket.emit("respondDraw",{code:roomCode,accept:true});else socket.emit("respondDraw",{code:roomCode,accept:false});});
-socket.on("gameFinished",data=>{const draw=data.result==="1/2-1/2";showWinner(data.result,data.reason);setStatus(draw?t("draw"):`${data.result==="1-0"?$("white-name").textContent:$("black-name").textContent} ${t("winnerSuffix")}`,`${data.reason}. ${data.rated?"Rated result saved.":"Sign in on both sides to record ratings."}`);toast(data.rated?"Rated game recorded.":"Game finished.");loadLeaderboard();loadHistory();});
+socket.on("gameFinished",data=>{const alreadyFinished=gameResultSaved;gameResultSaved=true;reviewMode=false;reviewIndex=game.history().length;showWinner(data.result,data.reason);if(!alreadyFinished)playCue("gameover");render();const draw=data.result==="1/2-1/2";setStatus(draw?t("draw"):`${data.result==="1-0"?$("white-name").textContent:$("black-name").textContent} ${t("winnerSuffix")}`,`${data.reason}. ${data.rated?"Rated result saved.":"Sign in on both sides to record ratings."}`);toast(data.rated?"Rated game recorded.":"Game finished.");loadLeaderboard();loadHistory();});
 socket.on("ratingsUpdated",data=>{if(account){const updated=data.white.username===account.username?data.white:data.black.username===account.username?data.black:account;updateProfileStats({...account,...updated});}});
+socket.on("rematchRequested",data=>{if(confirm(`${data.name} requested a rematch. Accept?`))socket.emit("respondRematch",{code:roomCode,accept:true});else socket.emit("respondRematch",{code:roomCode,accept:false});});
+socket.on("rematchStarted",data=>{game=new Chess(data.fen);clearSelection();premove=null;reviewMode=false;reviewIndex=0;lastMove=null;gameResultSaved=false;positionHistory=[game.fen()];moveGrades=[];$("winner-banner").hidden=true;$("rematch").hidden=true;onlineReady=!!data.ready;render();setStatus(t("whiteToMove"),`Rematch started in room ${roomCode}.`);toast("Rematch started.");});
+socket.on("rematchDeclined",()=>toast("Your opponent declined the rematch."));
 
 document.querySelectorAll(".tab").forEach(btn=>btn.addEventListener("click",()=>showView(btn.dataset.view)));
 document.querySelectorAll("[data-feature-view]").forEach(button=>button.addEventListener("click",()=>{if(button.dataset.featureMode)showMode(button.dataset.featureMode);showView(button.dataset.featureView,true);}));
@@ -431,11 +546,18 @@ $("language-setting").addEventListener("change",e=>{settings.language=e.target.v
 $("theme-setting").addEventListener("change",e=>{settings.theme=e.target.value;saveSettings();applySettings();});
 $("board-setting").addEventListener("change",e=>{settings.board=e.target.value;saveSettings();applySettings();});
 $("settings-sound").addEventListener("change",e=>{soundOn=e.target.checked;$("sound-toggle").checked=soundOn;settings.sound=soundOn;saveSettings();});
+$("settings-premoves").addEventListener("change",e=>{settings.premoves=e.target.checked;premove=null;saveSettings();render();});
 $("settings-flip").addEventListener("change",e=>{boardFlipped=e.target.checked;settings.flipped=boardFlipped;saveSettings();render();});
 $("hint-button").addEventListener("click",giveHint);$("coach-go").addEventListener("click",giveHint);
 $("start-game").addEventListener("click",startGame);
 $("new-game").addEventListener("click",()=>{if(mode==="online"){toast("Create or join a new room to start another online game.");return;}resetGame();});
-$("undo").addEventListener("click",()=>{if(mode==="online")return toast("Undo is disabled in online matches.");if(mode==="computer"&&game.history().length>=2){game.undo();game.undo();}else game.undo();clearSelection();lastMove=null;aiBusy=false;render();});
+$("undo").addEventListener("click",()=>{if(mode==="online")return toast("Undo is disabled in online matches.");if(mode==="computer"&&game.history().length>=2){game.undo();game.undo();}else game.undo();clearSelection();lastMove=null;aiBusy=false;rebuildAnalysis();render();});
+$("review-open").addEventListener("click",()=>setReviewPosition(game.history().length));$("review-start").addEventListener("click",()=>setReviewPosition(0));$("review-prev").addEventListener("click",()=>setReviewPosition(reviewIndex-1));$("review-next").addEventListener("click",()=>setReviewPosition(reviewIndex+1));$("review-end").addEventListener("click",()=>setReviewPosition(game.history().length));$("review-exit").addEventListener("click",()=>{reviewMode=false;clearSelection();render();});
+$("rematch").addEventListener("click",()=>{
+ if(mode!=="online"){resetGame();startGame();return;}
+ if(!roomCode||!onlineReady)return toast("A rematch needs both players in the room.");
+ socket.emit("requestRematch",{code:roomCode},result=>{if(!result?.ok)return toast(result?.error||"Could not request a rematch.");toast("Rematch request sent.");});
+});
 $("find-match").addEventListener("click",()=>{socket.emit("findMatch",{},r=>{if(!r?.ok)return toast(r?.error||"Search failed.");if(r.waiting)$("online-message").textContent=r.message;else setRoom(r);});});
 $("create-room").addEventListener("click",createRoom);$("create-friend-room").addEventListener("click",()=>{showMode("online");createRoom();});
 $("copy-invite-code").addEventListener("click",()=>navigator.clipboard?.writeText($("invite-code").value).then(()=>toast("Invite code copied."),()=>toast("Clipboard unavailable.")));
@@ -455,5 +577,5 @@ $("offer-draw").addEventListener("click",()=>{if(mode!=="online"||!roomCode)retu
 $("resign").addEventListener("click",()=>{if(mode!=="online"||!roomCode)return toast("Resignation is available in online matches.");if(confirm("Resign this game?"))socket.emit("resign",{code:roomCode});});
 $("chat-form").addEventListener("submit",e=>{e.preventDefault();const message=$("chat-input").value.trim();if(!message)return;if(mode!=="online"||!roomCode||!onlineReady)return toast("Join an online room before sending a message.");if(!socket.connected)return toast("Chat is unavailable while disconnected.");socket.emit("chatMessage",{code:roomCode,message},reply=>{if(!reply?.ok)return toast(reply?.error||"Message could not be sent.");$("chat-input").value="";});});
 $("footer-year").textContent=new Date().getFullYear();$("profile-name").textContent=name;
-applySettings();updateStats();socket.emit("setProfile",{name,username:account?.username});resetClocks();loadAccount();loadLeaderboard();loadReviews();loadGoogleSignIn();verifyEmailFromLink();render();
+applySettings();updateStats();socket.emit("setProfile",{name,username:account?.username});if(!restoreActiveGame())resetClocks();loadAccount();loadLeaderboard();loadReviews();loadGoogleSignIn();verifyEmailFromLink();render();
 const sharedPlayer=new URLSearchParams(location.search).get("player");if(sharedPlayer){showView("community",true);showPublicProfile(sharedPlayer);}

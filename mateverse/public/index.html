@@ -37,13 +37,19 @@
     <section id="view-play" class="view active">
       <div class="game-grid">
         <section class="board-card glass">
-          <div id="winner-banner" class="winner-banner" role="status" aria-live="assertive" hidden><span id="winner-title"></span><small id="winner-detail"></small></div>
+          <div id="connection-banner" class="connection-banner" role="status" aria-live="polite">Connecting to match server…</div>
+          <div id="winner-banner" class="winner-banner" role="status" aria-live="assertive" hidden><span id="winner-title"></span><small id="winner-detail"></small><button id="rematch" class="action gold" hidden>Request rematch</button></div>
           <div class="player-row"><div class="avatar dark-avatar">♚</div><div><b id="black-name">Computer</b><small id="black-caption">Black · Opponent</small></div><span class="elo" id="black-elo">AI</span></div>
           <div class="board-frame">
             <div class="ranks" aria-hidden="true"><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span></div>
             <div id="board" class="board" aria-label="Chess board"></div>
+            <div class="evaluation-wrap" aria-label="Position evaluation" title="Local position estimate; Stockfish analysis is not enabled.">
+              <span id="evaluation-label" class="evaluation-label">0.0</span>
+              <div class="evaluation-track"><div id="evaluation-fill" class="evaluation-fill"></div></div>
+            </div>
           </div>
           <div class="board-tools"><button class="action ghost" id="flip-board">⇅ Flip board</button><button class="action ghost" id="export-pgn">↓ Export PGN</button><button class="action ghost" id="copy-fen">Copy FEN</button><label class="sound-toggle"><input type="checkbox" id="sound-toggle" checked> Sound</label></div>
+          <div id="review-controls" class="review-controls" hidden><button class="action gold" id="review-open">Review game</button><button class="action ghost" id="review-start" aria-label="First move">|◀</button><button class="action ghost" id="review-prev" aria-label="Previous move">◀</button><span id="review-position">Live game</span><button class="action ghost" id="review-next" aria-label="Next move">▶</button><button class="action ghost" id="review-end" aria-label="Latest move">▶|</button><button class="action secondary" id="review-exit">Exit review</button></div>
           <div class="files" aria-hidden="true"><span>a</span><span>b</span><span>c</span><span>d</span><span>e</span><span>f</span><span>g</span><span>h</span></div>
           <div class="player-row bottom-player"><div class="avatar light-avatar">♔</div><div><b id="white-name">You</b><small id="white-caption">White · You</small></div><span class="elo" id="white-elo">YOU</span></div>
         </section>
@@ -165,6 +171,7 @@
           <label class="setting-row"><span><b data-i18n="boardColors">Board colors</b><small data-i18n="boardColorsHelp">Pick a board palette.</small></span><select id="board-setting"><option value="classic">Classic</option><option value="ocean">Ocean</option><option value="forest">Forest</option></select></label>
           <label class="setting-row"><span><b data-i18n="computerStrength">Computer strength</b><small data-i18n="strengthHelp">Make the computer easier or more challenging.</small></span><select id="settings-difficulty"><option value="1">Beginner</option><option value="2">Intermediate</option><option value="3">Advanced</option></select></label>
           <label class="setting-toggle"><span><b data-i18n="moveSounds">Move sounds</b><small data-i18n="soundHelp">Play a sound after each move.</small></span><input id="settings-sound" type="checkbox"></label>
+          <label class="setting-toggle"><span><b>Pre-moves</b><small>Queue a move while your online opponent is thinking.</small></span><input id="settings-premoves" type="checkbox"></label>
           <label class="setting-toggle"><span><b data-i18n="flipBoard">Flip board</b><small data-i18n="flipHelp">Show your pieces at the bottom.</small></span><input id="settings-flip" type="checkbox"></label>
         </div>
       </div>
